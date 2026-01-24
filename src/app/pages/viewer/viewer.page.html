@@ -1,0 +1,80 @@
+<ion-content [fullscreen]="true" class="viewer-content" (click)="toggleControls()">
+  <div class="viewer-container" #imageContainer>
+    <!-- Image viewer -->
+    <div class="media-wrapper" *ngIf="currentMedia && currentMedia.type === 'image'">
+      <img 
+        [src]="thumbnailUrl" 
+        [alt]="currentMedia.name"
+        class="media-content"
+      />
+    </div>
+
+    <!-- Video viewer -->
+    <div class="media-wrapper" *ngIf="currentMedia && currentMedia.type === 'video'">
+      <video 
+        [src]="currentMedia.uri" 
+        controls
+        class="media-content"
+        (click)="$event.stopPropagation()"
+      ></video>
+    </div>
+  </div>
+
+  <!-- Controls overlay -->
+  <div class="controls-overlay" *ngIf="showControls">
+    <!-- Header -->
+    <div class="viewer-header">
+      <ion-button fill="clear" (click)="close()">
+        <ion-icon slot="icon-only" name="close"></ion-icon>
+      </ion-button>
+      <div class="media-info">
+        <h3>{{ currentMedia?.name }}</h3>
+        <p>{{ mediaCounter }}</p>
+      </div>
+      <div class="spacer"></div>
+    </div>
+
+    <!-- Navigation buttons -->
+    <div class="navigation-buttons">
+      <ion-button 
+        fill="clear" 
+        (click)="previousMedia(); $event.stopPropagation()" 
+        [disabled]="!canGoPrevious"
+        class="nav-button nav-previous"
+      >
+        <ion-icon slot="icon-only" name="chevron-back"></ion-icon>
+      </ion-button>
+
+      <ion-button 
+        fill="clear" 
+        (click)="nextMedia(); $event.stopPropagation()" 
+        [disabled]="!canGoNext"
+        class="nav-button nav-next"
+      >
+        <ion-icon slot="icon-only" name="chevron-forward"></ion-icon>
+      </ion-button>
+    </div>
+
+    <!-- Footer with media details -->
+    <div class="viewer-footer" *ngIf="currentMedia">
+      <div class="media-details">
+        <span class="detail-item">
+          <ion-icon name="calendar-outline"></ion-icon>
+          {{ currentMedia.dateTaken | date:'medium' }}
+        </span>
+        <span class="detail-item">
+          <ion-icon name="expand-outline"></ion-icon>
+          {{ currentMedia.width }}x{{ currentMedia.height }}
+        </span>
+        <span class="detail-item" *ngIf="currentMedia.size">
+          <ion-icon name="document-outline"></ion-icon>
+          {{ (currentMedia.size / 1024 / 1024).toFixed(2) }} MB
+        </span>
+        <span class="detail-item" *ngIf="currentMedia.type === 'video' && currentMedia.duration">
+          <ion-icon name="time-outline"></ion-icon>
+          {{ (currentMedia.duration / 1000).toFixed(0) }}s
+        </span>
+      </div>
+    </div>
+  </div>
+</ion-content>

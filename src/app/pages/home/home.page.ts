@@ -1,7 +1,10 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { ActionSheetController, AlertController, LoadingController } from '@ionic/angular';
+import { Router } from '@angular/router';
 import { PhotoService } from '../../services/photo.service';
-import { Photo, SortType } from '../../models/gallery.model';
+import { MediaService, MediaSortType, MediaFilter } from '../../services/media.service';
+import { Photo, SortType, MediaItemView, MediaFilterType } from '../../models/gallery.model';
+import { MediaItem } from '../../plugins/media-store.plugin';
 
 @Component({
   selector: 'app-home',
@@ -9,86 +12,290 @@ import { Photo, SortType } from '../../models/gallery.model';
   styleUrls: ['home.page.scss'],
   standalone: false
 })
-export class HomePage implements OnInit {
+export class HomePage implements OnInit, OnDestroy {
+  // Legacy photos from PhotoService
   photos: Photo[] = [];
-  currentSort: SortType = SortType.DATE_DESC;
+  
+  // New media from MediaService
+  mediaItems: MediaItemView[] = [];
+  displayedMedia: MediaItemView[] = [];
+  thumbnails = new Map<string, string>();
+  
+  currentSort: MediaSortType = MediaSortType.DATE_DESC;
+  currentFilter: MediaFilterType = MediaFilterType.ALL;
   sortTypes = SortType;
+  
+  isLoading = false;
+  hasPermission = false;
+  batchSize = 50;
+  currentBatch = 0;
+  
+  // Thumbnail loading queue
+  private thumbnailQueue: string[] = [];
+  private loadingThumbnails = false;
 
   constructor(
     public photoService: PhotoService,
+    private mediaService: MediaService,
     public actionSheetController: ActionSheetController,
     private alertController: AlertController,
-    private loadingController: LoadingController
+    private loadingController: LoadingController,
+    private router: Router
   ) {}
 
   async ngOnInit() {
-    this.loadPhotos();
-    await this.checkInitialScan();
+    await this.initializeGallery();
   }
 
-  ionViewWillEnter() {
-    this.loadPhotos();
+  ngOnDestroy() {
+    // Cleanup if needed
   }
 
-  // Check if we need to prompt for initial photo import
-  async checkInitialScan() {
-    const hasScanned = await this.photoService.hasCompletedInitialScan();
-    
-    if (!hasScanned) {
-      // Show welcome dialog
-      const alert = await this.alertController.create({
-        header: 'Welcome to Gallery!',
-        message: 'Would you like to import existing photos and videos from your device?',
-        buttons: [
-          {
-            text: 'Not Now',
-            role: 'cancel',
-            handler: async () => {
-              // Mark as complete even if user skips
-              await this.photoService.importPhotosFromDevice();
-            }
-          },
-          {
-            text: 'Import Photos',
-            handler: async () => {
-              await this.importDevicePhotos();
-            }
-          }
-        ],
-        backdropDismiss: false
-      });
-      await alert.present();
+  async ionViewWillEnter() {
+    this.loadLegacyPhotos();
+    if (this.hasPermission && this.mediaItems.length > 0) {
+      this.loadNextBatch();
     }
   }
 
-  // Import photos from device
-  async importDevicePhotos() {
+  async initializeGallery() {
+    // Check if initial scan has been done
+    const hasScanned = await this.mediaService.hasCompletedInitialScan();
+    
+    if (!hasScanned) {
+      await this.promptInitialScan();
+    } else {
+      // Check permissions
+      this.hasPermission = await this.mediaService.checkPermissions();
+      
+      if (this.hasPermission) {
+        await this.loadMediaFromStore();
+      } else {
+        // Fall back to legacy photos
+        this.loadLegacyPhotos();
+      }
+    }
+  }
+
+  async promptInitialScan() {
+    const alert = await this.alertController.create({
+      header: 'Welcome to Gallery!',
+      message: 'Would you like to scan your device for photos and videos? This app will automatically organize your media into albums.',
+      buttons: [
+        {
+          text: 'Not Now',
+          role: 'cancel',
+          handler: () => {
+            this.loadLegacyPhotos();
+          }
+        },
+        {
+          text: 'Scan Device',
+          handler: async () => {
+            await this.scanDeviceMedia();
+          }
+        }
+      ],
+      backdropDismiss: false
+    });
+    await alert.present();
+  }
+
+  async scanDeviceMedia() {
+    // Request permissions first
+    const granted = await this.mediaService.requestPermissions();
+    
+    if (!granted) {
+      const alert = await this.alertController.create({
+        header: 'Permission Required',
+        message: 'Please grant storage permission to scan your photos and videos. You can change this in app settings.',
+        buttons: [
+          {
+            text: 'Cancel',
+            role: 'cancel',
+            handler: () => {
+              this.loadLegacyPhotos();
+            }
+          },
+          {
+            text: 'Try Again',
+            handler: async () => {
+              await this.scanDeviceMedia();
+            }
+          }
+        ]
+      });
+      await alert.present();
+      return;
+    }
+
+    this.hasPermission = true;
+
+    // Show loading
     const loading = await this.loadingController.create({
-      message: 'Importing photos...',
+      message: 'Scanning device for media...',
+      spinner: 'circles'
     });
     await loading.present();
 
     try {
-      const count = await this.photoService.importPhotosFromDevice();
+      let loadedCount = 0;
+      await this.mediaService.scanAllMedia({
+        forceRefresh: true,
+        progressCallback: (loaded, total) => {
+          loadedCount = loaded;
+          loading.message = `Found ${loaded} media files...`;
+        }
+      });
+
       await loading.dismiss();
 
-      if (count > 0) {
-        this.loadPhotos();
-        const alert = await this.alertController.create({
-          header: 'Success!',
-          message: `Imported ${count} photo${count !== 1 ? 's' : ''} successfully.`,
-          buttons: ['OK']
-        });
-        await alert.present();
-      }
+      // Show success message
+      const successAlert = await this.alertController.create({
+        header: 'Scan Complete!',
+        message: `Found ${loadedCount} photos and videos on your device.`,
+        buttons: ['OK']
+      });
+      await successAlert.present();
+
+      // Load the media
+      await this.loadMediaFromStore();
     } catch (error) {
       await loading.dismiss();
-      console.error('Error importing photos:', error);
+      console.error('Error scanning media:', error);
+      
+      const errorAlert = await this.alertController.create({
+        header: 'Scan Failed',
+        message: 'Could not scan device media. Please try again or check app permissions.',
+        buttons: ['OK']
+      });
+      await errorAlert.present();
+      
+      // Fall back to legacy
+      this.loadLegacyPhotos();
     }
   }
 
-  loadPhotos() {
-    this.photos = this.photoService.getPhotos(this.currentSort);
+  async loadMediaFromStore() {
+    this.isLoading = true;
+
+    try {
+      const filter: MediaFilter = {
+        type: this.currentFilter === MediaFilterType.ALL ? undefined : this.currentFilter
+      };
+
+      const allMedia = this.mediaService.getMedia(filter, this.currentSort);
+      
+      // Convert to view models
+      this.mediaItems = allMedia.map(item => this.convertToViewModel(item));
+      
+      // Load first batch
+      this.currentBatch = 0;
+      this.loadNextBatch();
+    } catch (error) {
+      console.error('Error loading media:', error);
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  convertToViewModel(item: MediaItem): MediaItemView {
+    return {
+      id: item.id,
+      name: item.name,
+      dateTaken: new Date(item.dateTaken),
+      size: item.size,
+      uri: item.uri,
+      type: item.type,
+      bucket: item.bucket,
+      width: item.width,
+      height: item.height,
+      duration: item.duration
+    };
+  }
+
+  loadNextBatch() {
+    const start = this.currentBatch * this.batchSize;
+    const end = start + this.batchSize;
+    const newItems = this.mediaItems.slice(start, end);
+    
+    if (newItems.length > 0) {
+      this.displayedMedia = [...this.displayedMedia, ...newItems];
+      this.currentBatch++;
+      
+      // Queue thumbnails for loading
+      newItems.forEach(item => {
+        if (!this.thumbnails.has(item.id)) {
+          this.thumbnailQueue.push(item.id);
+        }
+      });
+      
+      this.processThumbnailQueue();
+    }
+  }
+
+  async processThumbnailQueue() {
+    if (this.loadingThumbnails || this.thumbnailQueue.length === 0) {
+      return;
+    }
+
+    this.loadingThumbnails = true;
+
+    // Load thumbnails in small batches to avoid overwhelming the system
+    const batchSize = 5;
+    while (this.thumbnailQueue.length > 0) {
+      const batch = this.thumbnailQueue.splice(0, batchSize);
+      
+      await Promise.all(
+        batch.map(async (mediaId) => {
+          const media = this.displayedMedia.find(m => m.id === mediaId);
+          if (media && !this.thumbnails.has(mediaId)) {
+            try {
+              const thumbnail = await this.mediaService.getThumbnail(mediaId, media.type);
+              this.thumbnails.set(mediaId, thumbnail);
+              media.thumbnailUrl = thumbnail;
+            } catch (error) {
+              console.error('Error loading thumbnail:', error);
+            }
+          }
+        })
+      );
+
+      // Small delay between batches
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    this.loadingThumbnails = false;
+  }
+
+  getThumbnail(mediaId: string): string {
+    return this.thumbnails.get(mediaId) || '';
+  }
+
+  onScroll(event: any) {
+    const scrollElement = event.target;
+    const scrollHeight = scrollElement.scrollHeight;
+    const scrollTop = scrollElement.scrollTop;
+    const clientHeight = scrollElement.clientHeight;
+
+    // Load more when scrolled to 80% of content
+    if (scrollTop + clientHeight >= scrollHeight * 0.8) {
+      if (this.displayedMedia.length < this.mediaItems.length) {
+        this.loadNextBatch();
+      }
+    }
+  }
+
+  loadLegacyPhotos() {
+    this.photos = this.photoService.getPhotos(this.currentSort as any);
+  }
+
+  async openMediaViewer(media: MediaItemView) {
+    this.router.navigate(['/viewer', media.id], {
+      queryParams: {
+        filter: this.currentFilter !== MediaFilterType.ALL ? this.currentFilter : null
+      }
+    });
   }
 
   async addPhotoToGallery() {
@@ -103,17 +310,10 @@ export class HomePage implements OnInit {
           }
         },
         {
-          text: 'Choose from Gallery',
-          icon: 'images',
-          handler: () => {
-            this.chooseFromGallery();
-          }
-        },
-        {
-          text: 'Import Multiple Photos',
-          icon: 'albums',
-          handler: () => {
-            this.importDevicePhotos();
+          text: 'Scan Device Media',
+          icon: 'refresh',
+          handler: async () => {
+            await this.scanDeviceMedia();
           }
         },
         {
@@ -129,143 +329,70 @@ export class HomePage implements OnInit {
   async takePhoto() {
     try {
       await this.photoService.addNewPhoto();
-      this.loadPhotos();
+      this.loadLegacyPhotos();
     } catch (error) {
       console.error('Error taking photo:', error);
     }
   }
 
-  async chooseFromGallery() {
-    try {
-      await this.photoService.addFromGallery();
-      this.loadPhotos();
-    } catch (error) {
-      console.error('Error choosing from gallery:', error);
-    }
-  }
-
-  async showPhotoActions(photo: Photo) {
-    const albums = this.photoService.getAlbums();
-    const albumButtons = albums.map(album => ({
-      text: album.name,
-      handler: () => {
-        this.addToAlbum(photo, album.id);
-      }
-    }));
-
-    const actionSheet = await this.actionSheetController.create({
-      header: 'Photo Actions',
-      buttons: [
-        {
-          text: 'Add to Album',
-          icon: 'folder',
-          handler: async () => {
-            if (albums.length === 0) {
-              const alert = await this.alertController.create({
-                header: 'No Albums',
-                message: 'Create an album first from the Albums tab.',
-                buttons: ['OK']
-              });
-              await alert.present();
-            } else {
-              const albumSheet = await this.actionSheetController.create({
-                header: 'Select Album',
-                buttons: [...albumButtons, {
-                  text: 'Cancel',
-                  icon: 'close',
-                  role: 'cancel'
-                }]
-              });
-              await albumSheet.present();
-            }
-          }
-        },
-        {
-          text: 'Delete',
-          role: 'destructive',
-          icon: 'trash',
-          handler: () => {
-            this.deletePhoto(photo);
-          }
-        },
-        {
-          text: 'Cancel',
-          icon: 'close',
-          role: 'cancel'
-        }
-      ]
-    });
-    await actionSheet.present();
-  }
-
-  async addToAlbum(photo: Photo, albumId: string) {
-    await this.photoService.addPhotoToAlbum(photo.id, albumId);
-    this.loadPhotos();
-    
-    const alert = await this.alertController.create({
-      header: 'Success',
-      message: 'Photo added to album',
-      buttons: ['OK']
-    });
-    await alert.present();
-  }
-
-  async deletePhoto(photo: Photo) {
-    const alert = await this.alertController.create({
-      header: 'Delete Photo',
-      message: 'Are you sure you want to delete this photo?',
-      buttons: [
-        {
-          text: 'Cancel',
-          role: 'cancel'
-        },
-        {
-          text: 'Delete',
-          role: 'destructive',
-          handler: async () => {
-            await this.photoService.deletePhoto(photo);
-            this.loadPhotos();
-          }
-        }
-      ]
-    });
-    await alert.present();
-  }
-
   async showSortOptions() {
     const actionSheet = await this.actionSheetController.create({
-      header: 'Sort By',
+      header: 'Sort & Filter',
       buttons: [
         {
-          text: 'Date (Newest First)',
-          icon: 'calendar',
+          text: 'All Media',
+          icon: this.currentFilter === MediaFilterType.ALL ? 'checkmark' : 'image',
           handler: () => {
-            this.currentSort = SortType.DATE_DESC;
-            this.loadPhotos();
+            this.currentFilter = MediaFilterType.ALL;
+            this.refreshMedia();
+          }
+        },
+        {
+          text: 'Images Only',
+          icon: this.currentFilter === MediaFilterType.IMAGES ? 'checkmark' : 'images',
+          handler: () => {
+            this.currentFilter = MediaFilterType.IMAGES;
+            this.refreshMedia();
+          }
+        },
+        {
+          text: 'Videos Only',
+          icon: this.currentFilter === MediaFilterType.VIDEOS ? 'checkmark' : 'videocam',
+          handler: () => {
+            this.currentFilter = MediaFilterType.VIDEOS;
+            this.refreshMedia();
+          }
+        },
+        {
+          text: 'Date (Newest First)',
+          icon: this.currentSort === MediaSortType.DATE_DESC ? 'checkmark' : 'calendar',
+          handler: () => {
+            this.currentSort = MediaSortType.DATE_DESC;
+            this.refreshMedia();
           }
         },
         {
           text: 'Date (Oldest First)',
-          icon: 'calendar-outline',
+          icon: this.currentSort === MediaSortType.DATE_ASC ? 'checkmark' : 'calendar-outline',
           handler: () => {
-            this.currentSort = SortType.DATE_ASC;
-            this.loadPhotos();
+            this.currentSort = MediaSortType.DATE_ASC;
+            this.refreshMedia();
           }
         },
         {
           text: 'Name (A-Z)',
-          icon: 'text',
+          icon: this.currentSort === MediaSortType.NAME_ASC ? 'checkmark' : 'text',
           handler: () => {
-            this.currentSort = SortType.NAME_ASC;
-            this.loadPhotos();
+            this.currentSort = MediaSortType.NAME_ASC;
+            this.refreshMedia();
           }
         },
         {
-          text: 'Name (Z-A)',
-          icon: 'text-outline',
+          text: 'Size (Largest)',
+          icon: this.currentSort === MediaSortType.SIZE_DESC ? 'checkmark' : 'expand',
           handler: () => {
-            this.currentSort = SortType.NAME_DESC;
-            this.loadPhotos();
+            this.currentSort = MediaSortType.SIZE_DESC;
+            this.refreshMedia();
           }
         },
         {
@@ -277,4 +404,28 @@ export class HomePage implements OnInit {
     });
     await actionSheet.present();
   }
+
+  async refreshMedia() {
+    this.displayedMedia = [];
+    this.currentBatch = 0;
+    this.thumbnailQueue = [];
+    await this.loadMediaFromStore();
+  }
+
+  get totalMediaCount(): number {
+    return this.hasPermission ? this.mediaService.getTotalCount() : this.photos.length;
+  }
+
+  get imageCount(): number {
+    return this.hasPermission ? this.mediaService.getImageCount() : this.photos.length;
+  }
+
+  get videoCount(): number {
+    return this.hasPermission ? this.mediaService.getVideoCount() : 0;
+  }
+
+  trackByMediaId(index: number, media: MediaItemView): string {
+    return media.id;
+  }
 }
+

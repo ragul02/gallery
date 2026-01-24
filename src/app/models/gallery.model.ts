@@ -25,3 +25,33 @@ export enum SortType {
   SIZE_DESC = 'size_desc',
   SIZE_ASC = 'size_asc'
 }
+
+// New interfaces for MediaStore integration
+export interface MediaItemView {
+  id: string;
+  name: string;
+  dateTaken: Date;
+  size: number;
+  thumbnailUrl?: string;
+  uri: string;
+  type: 'image' | 'video';
+  bucket: string;
+  width: number;
+  height: number;
+  duration?: number;
+}
+
+export interface AlbumView {
+  id: string;
+  name: string;
+  count: number;
+  coverThumbnail?: string;
+  type: 'auto' | 'custom';
+}
+
+export enum MediaFilterType {
+  ALL = 'all',
+  IMAGES = 'image',
+  VIDEOS = 'video'
+}
+
