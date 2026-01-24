@@ -18,6 +18,10 @@ const routes: Routes = [
   {
     path: 'album/:id',
     loadChildren: () => import('./pages/album-detail/album-detail.module').then(m => m.AlbumDetailPageModule)
+  },
+  {
+    path: 'viewer/:id',
+    loadChildren: () => import('./pages/viewer/viewer.module').then(m => m.ViewerPageModule)
   }
 ];
 

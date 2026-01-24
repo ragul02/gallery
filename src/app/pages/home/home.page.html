@@ -12,15 +12,69 @@
   </ion-toolbar>
 </ion-header>
 
-<ion-content [fullscreen]="true">
+<ion-content [fullscreen]="true" [scrollEvents]="true" (ionScroll)="onScroll($event)">
   <ion-header collapse="condense">
     <ion-toolbar>
       <ion-title size="large">Gallery</ion-title>
     </ion-toolbar>
   </ion-header>
 
-  <div class="photo-grid" *ngIf="photos.length > 0">
-    <ion-card *ngFor="let photo of photos" (click)="showPhotoActions(photo)">
+  <!-- Stats header -->
+  <div class="stats-header" *ngIf="hasPermission && totalMediaCount > 0">
+    <div class="stat-item">
+      <ion-icon name="images"></ion-icon>
+      <span>{{ totalMediaCount }} items</span>
+    </div>
+    <div class="stat-item" *ngIf="imageCount > 0">
+      <ion-icon name="image"></ion-icon>
+      <span>{{ imageCount }} photos</span>
+    </div>
+    <div class="stat-item" *ngIf="videoCount > 0">
+      <ion-icon name="videocam"></ion-icon>
+      <span>{{ videoCount }} videos</span>
+    </div>
+  </div>
+
+  <!-- Loading indicator -->
+  <div class="loading-container" *ngIf="isLoading">
+    <ion-spinner></ion-spinner>
+    <p>Loading media...</p>
+  </div>
+
+  <!-- Media grid with virtual scrolling -->
+  <div class="photo-grid" *ngIf="!isLoading && hasPermission && displayedMedia.length > 0">
+    <div 
+      class="media-card" 
+      *ngFor="let media of displayedMedia; trackBy: trackByMediaId"
+      (click)="openMediaViewer(media)"
+    >
+      <div class="media-thumbnail">
+        <img 
+          *ngIf="media.thumbnailUrl" 
+          [src]="media.thumbnailUrl" 
+          [alt]="media.name"
+          loading="lazy"
+        />
+        <div class="thumbnail-placeholder" *ngIf="!media.thumbnailUrl">
+          <ion-spinner></ion-spinner>
+        </div>
+        
+        <!-- Video indicator -->
+        <div class="video-indicator" *ngIf="media.type === 'video'">
+          <ion-icon name="play-circle"></ion-icon>
+          <span *ngIf="media.duration">{{ (media.duration / 1000).toFixed(0) }}s</span>
+        </div>
+      </div>
+      
+      <div class="media-info">
+        <p class="media-date">{{ media.dateTaken | date:'short' }}</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Legacy photo grid (fallback) -->
+  <div class="photo-grid" *ngIf="!hasPermission && photos.length > 0">
+    <ion-card *ngFor="let photo of photos">
       <img [src]="photo.webviewPath" />
       <ion-card-content>
         <p class="photo-date">{{ photo.dateTaken | date:'short' }}</p>
@@ -28,10 +82,16 @@
     </ion-card>
   </div>
 
-  <div class="empty-state" *ngIf="photos.length === 0">
+  <!-- Empty state -->
+  <div class="empty-state" *ngIf="!isLoading && (!hasPermission && photos.length === 0) || (hasPermission && displayedMedia.length === 0)">
     <ion-icon name="images-outline"></ion-icon>
-    <h2>No Photos Yet</h2>
-    <p>Start by adding your first photo!</p>
+    <h2>No Media Found</h2>
+    <p *ngIf="!hasPermission">Grant permissions to scan your device for photos and videos.</p>
+    <p *ngIf="hasPermission">Your device doesn't have any photos or videos yet.</p>
+    <ion-button (click)="scanDeviceMedia()" *ngIf="hasPermission">
+      <ion-icon slot="start" name="refresh"></ion-icon>
+      Rescan Device
+    </ion-button>
   </div>
 
   <ion-fab vertical="bottom" horizontal="end" slot="fixed">
@@ -40,3 +100,4 @@
     </ion-fab-button>
   </ion-fab>
 </ion-content>
+
