@@ -8,6 +8,7 @@ import { Album } from '../../models/gallery.model';
   selector: 'app-albums',
   templateUrl: './albums.page.html',
   styleUrls: ['./albums.page.scss'],
+  standalone: false
 })
 export class AlbumsPage implements OnInit {
   albums: Album[] = [];

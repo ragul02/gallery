@@ -8,6 +8,7 @@ import { Album, Photo, SortType } from '../../models/gallery.model';
   selector: 'app-album-detail',
   templateUrl: './album-detail.page.html',
   styleUrls: ['./album-detail.page.scss'],
+  standalone: false
 })
 export class AlbumDetailPage implements OnInit {
   album?: Album;
