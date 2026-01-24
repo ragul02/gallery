@@ -1,0 +1,38 @@
+<ion-header [translucent]="true">
+  <ion-toolbar>
+    <ion-buttons slot="start">
+      <ion-back-button defaultHref="/home"></ion-back-button>
+    </ion-buttons>
+    <ion-title>Albums</ion-title>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content [fullscreen]="true">
+  <ion-header collapse="condense">
+    <ion-toolbar>
+      <ion-title size="large">Albums</ion-title>
+    </ion-toolbar>
+  </ion-header>
+
+  <div class="albums-grid" *ngIf="albums.length > 0">
+    <ion-card *ngFor="let album of albums" (click)="showAlbumActions(album)">
+      <img [src]="album.coverPhoto || 'assets/icon/placeholder.png'" />
+      <ion-card-header>
+        <ion-card-title>{{ album.name }}</ion-card-title>
+        <ion-card-subtitle>{{ album.photoCount }} photos</ion-card-subtitle>
+      </ion-card-header>
+    </ion-card>
+  </div>
+
+  <div class="empty-state" *ngIf="albums.length === 0">
+    <ion-icon name="albums-outline"></ion-icon>
+    <h2>No Albums Yet</h2>
+    <p>Create your first album to organize photos</p>
+  </div>
+
+  <ion-fab vertical="bottom" horizontal="end" slot="fixed">
+    <ion-fab-button (click)="createAlbum()">
+      <ion-icon name="add"></ion-icon>
+    </ion-fab-button>
+  </ion-fab>
+</ion-content>
