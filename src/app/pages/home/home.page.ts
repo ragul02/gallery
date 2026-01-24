@@ -52,9 +52,16 @@ export class HomePage implements OnInit, OnDestroy {
   }
 
   async ionViewWillEnter() {
-    this.loadLegacyPhotos();
-    if (this.hasPermission && this.mediaItems.length > 0) {
-      this.loadNextBatch();
+    // Check for album filter from query params
+    const albumFilter = this.router.routerState.snapshot.root.queryParams['album'];
+    if (albumFilter) {
+      this.currentFilter = MediaFilterType.ALL;
+      await this.loadMediaFromStore(albumFilter);
+    } else {
+      this.loadLegacyPhotos();
+      if (this.hasPermission && this.mediaItems.length > 0) {
+        this.loadNextBatch();
+      }
     }
   }
 
@@ -176,12 +183,13 @@ export class HomePage implements OnInit, OnDestroy {
     }
   }
 
-  async loadMediaFromStore() {
+  async loadMediaFromStore(albumName?: string) {
     this.isLoading = true;
 
     try {
       const filter: MediaFilter = {
-        type: this.currentFilter === MediaFilterType.ALL ? undefined : this.currentFilter
+        type: this.currentFilter === MediaFilterType.ALL ? undefined : this.currentFilter,
+        album: albumName
       };
 
       const allMedia = this.mediaService.getMedia(filter, this.currentSort);

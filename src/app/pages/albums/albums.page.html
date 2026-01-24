@@ -14,20 +14,65 @@
     </ion-toolbar>
   </ion-header>
 
-  <div class="albums-grid" *ngIf="albums.length > 0">
-    <ion-card *ngFor="let album of albums" (click)="showAlbumActions(album)">
-      <img [src]="album.coverPhoto || 'assets/icon/placeholder.png'" />
-      <ion-card-header>
-        <ion-card-title>{{ album.name }}</ion-card-title>
-        <ion-card-subtitle>{{ album.photoCount }} photos</ion-card-subtitle>
-      </ion-card-header>
-    </ion-card>
+  <!-- Stats header -->
+  <div class="stats-header" *ngIf="allAlbums.length > 0">
+    <div class="stat-item">
+      <ion-icon name="albums"></ion-icon>
+      <span>{{ allAlbums.length }} albums</span>
+    </div>
+    <div class="stat-item" *ngIf="autoAlbumsCount > 0">
+      <ion-icon name="folder"></ion-icon>
+      <span>{{ autoAlbumsCount }} folders</span>
+    </div>
+    <div class="stat-item" *ngIf="customAlbumsCount > 0">
+      <ion-icon name="create"></ion-icon>
+      <span>{{ customAlbumsCount }} custom</span>
+    </div>
   </div>
 
-  <div class="empty-state" *ngIf="albums.length === 0">
+  <!-- Loading indicator -->
+  <div class="loading-container" *ngIf="isLoading">
+    <ion-spinner></ion-spinner>
+    <p>Loading albums...</p>
+  </div>
+
+  <!-- Albums grid -->
+  <div class="albums-grid" *ngIf="!isLoading && allAlbums.length > 0">
+    <div 
+      class="album-card" 
+      *ngFor="let album of allAlbums"
+      (click)="showAlbumActions(album)"
+    >
+      <div class="album-cover">
+        <img 
+          *ngIf="album.coverThumbnail" 
+          [src]="album.coverThumbnail" 
+          [alt]="album.name"
+        />
+        <div class="cover-placeholder" *ngIf="!album.coverThumbnail">
+          <ion-icon name="images-outline"></ion-icon>
+        </div>
+        
+        <!-- Album type badge -->
+        <div class="album-badge" [class.auto]="album.type === 'auto'" [class.custom]="album.type === 'custom'">
+          <ion-icon [name]="album.type === 'auto' ? 'folder' : 'create'"></ion-icon>
+        </div>
+      </div>
+      
+      <div class="album-info">
+        <h3>{{ album.name }}</h3>
+        <p>{{ album.count }} {{ album.count === 1 ? 'item' : 'items' }}</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Empty state -->
+  <div class="empty-state" *ngIf="!isLoading && allAlbums.length === 0">
     <ion-icon name="albums-outline"></ion-icon>
-    <h2>No Albums Yet</h2>
-    <p>Create your first album to organize photos</p>
+    <h2>No Albums Found</h2>
+    <p *ngIf="hasPermission">Your device doesn't have any photo folders yet.</p>
+    <p *ngIf="!hasPermission">Grant permissions to see auto-detected folders.</p>
+    <p>Create a custom album to organize your photos.</p>
   </div>
 
   <ion-fab vertical="bottom" horizontal="end" slot="fixed">
@@ -36,3 +81,4 @@
     </ion-fab-button>
   </ion-fab>
 </ion-content>
+

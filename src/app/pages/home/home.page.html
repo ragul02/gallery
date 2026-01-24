@@ -74,7 +74,7 @@
 
   <!-- Legacy photo grid (fallback) -->
   <div class="photo-grid" *ngIf="!hasPermission && photos.length > 0">
-    <ion-card *ngFor="let photo of photos" (click)="openMediaViewer(photo)">
+    <ion-card *ngFor="let photo of photos">
       <img [src]="photo.webviewPath" />
       <ion-card-content>
         <p class="photo-date">{{ photo.dateTaken | date:'short' }}</p>
