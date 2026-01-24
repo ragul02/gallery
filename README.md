@@ -1,44 +1,77 @@
 # Gallery App
 
-A full-featured mobile gallery application built with Ionic Angular and Capacitor for Android.
+A professional, full-featured mobile gallery application built with Ionic Angular and Capacitor for Android. Works like Google Photos with automatic media detection, smart albums, and professional UI.
 
-## Features
+## ✨ Key Features
 
-### 📸 Photo Management
-- **Capture Photos**: Take photos directly using your device camera
-- **Import Photos**: Select photos from your device gallery
-- **View Photos**: Browse all your photos in a beautiful grid layout
-- **Delete Photos**: Remove unwanted photos permanently
-- **Photo Details**: View metadata like capture date
+### 📸 **Automatic Media Discovery**
+- **First Launch Scanning**: Automatically scans entire device storage for photos and videos
+- **No Manual Import**: Uses Android MediaStore API for native media access
+- **Supported Formats**: 
+  - Images: JPG, PNG, WebP, HEIC
+  - Videos: MP4, MKV, MOV
+- **Real-time Updates**: Automatically detects when new photos are taken or media is deleted
 
-### 📁 Album Organization
-- **Create Albums**: Organize photos into custom albums
-- **Album Management**: Create, view, and delete albums
-- **Add to Album**: Organize photos by adding them to albums
-- **Remove from Album**: Remove photos from albums without deleting them
-- **Album Cover**: Automatically set album covers from the first photo
+### 🔐 **Smart Permissions (Android 11+)**
+- **Granular Permissions**:
+  - READ_MEDIA_IMAGES (Android 13+)
+  - READ_MEDIA_VIDEO (Android 13+)
+  - READ_EXTERNAL_STORAGE (Legacy fallback)
+- **User-Friendly Flow**: Graceful permission denial with explanation dialogs
+- **Re-request Support**: Easy permission re-request when needed
 
-### 🔄 Sorting Options
-Sort your photos by:
-- **Date (Newest First)**: Default - most recent photos first
-- **Date (Oldest First)**: Oldest photos first
-- **Name (A-Z)**: Alphabetical order
-- **Name (Z-A)**: Reverse alphabetical order
-- **Size (Largest First)**: Biggest files first
-- **Size (Smallest First)**: Smallest files first
+### ⚡ **High Performance**
+- **Fast Thumbnails**: 
+  - Uses native Android thumbnail APIs
+  - Local caching via Capacitor Preferences
+  - Lazy loading with background queue
+- **Optimized Grid**:
+  - Batched loading (50 items per batch)
+  - Scroll-based pagination
+  - Efficient rendering with TrackBy
+  - No UI thread blocking
 
-### 💾 Storage
-- Photos are stored locally using Capacitor Filesystem
-- Persistent storage using Capacitor Preferences
-- Photos survive app restarts
+### 📁 **Smart Albums**
+- **Auto-Detection**: Automatically groups media into folders:
+  - Camera
+  - WhatsApp Images
+  - Screenshots
+  - Downloads
+  - And all other device folders
+- **Custom Albums**: Create and manage your own albums
+- **Album Covers**: Automatically generated from first photo
+- **Media Counts**: Shows number of items in each album
+
+### 🎨 **Professional UI**
+- **Modern Grid Layout**: Pinterest-style responsive grid
+- **Video Support**: 
+  - Video playback in fullscreen
+  - Duration indicators
+  - Play icons overlay
+- **Fullscreen Viewer**:
+  - Pinch-to-zoom support
+  - Swipe left/right navigation
+  - Media details overlay
+  - Video playback controls
+- **Stats Dashboard**: Total media, images, and videos count
+- **Filter & Sort**:
+  - Filter: All, Images Only, Videos Only
+  - Sort: Date, Size, Name (ascending/descending)
+
+### 💾 **Advanced Storage**
+- **Indexed Queries**: Uses MediaStore indexed queries (no recursive scanning)
+- **Thumbnail Cache**: Stores last 100 thumbnails for instant loading
+- **Media Metadata**: Full metadata including date, size, dimensions, duration
+- **Efficient Storage**: Only metadata cached, not full images
 
 ## Technology Stack
 
-- **Framework**: Ionic 7 + Angular 17
-- **Native**: Capacitor 5
-- **Platform**: Android
-- **Language**: TypeScript
-- **Styling**: SCSS with Ionic components
+- **Framework**: Ionic 7 + Angular 19
+- **Native**: Capacitor 5 with custom MediaStore plugin
+- **Platform**: Android (API 22+, optimized for 11-14)
+- **Language**: TypeScript 5.7 + Java
+- **Architecture**: Clean architecture with service layers
+- **Styling**: SCSS with Ionic Material Design
 
 ## Prerequisites
 
@@ -78,7 +111,7 @@ npm start
 ```
 Then open http://localhost:4200 in your browser.
 
-**Note**: Camera functionality requires a real device; it won't work in the browser.
+**Note**: Native features (MediaStore, Camera) require a real Android device.
 
 ### Run on Android Device/Emulator
 
@@ -123,67 +156,115 @@ The APK will be at: `android/app/build/outputs/apk/release/app-release.apk`
 gallery/
 ├── src/
 │   ├── app/
-│   │   ├── models/           # TypeScript interfaces
-│   │   ├── pages/            # App pages/screens
-│   │   │   ├── home/         # Main gallery view
-│   │   │   ├── albums/       # Albums list
-│   │   │   └── album-detail/ # Individual album view
-│   │   ├── services/         # Business logic
-│   │   │   └── photo.service.ts
-│   │   ├── app.component.*   # Root component
-│   │   ├── app.module.ts     # Root module
-│   │   └── app-routing.module.ts
-│   ├── theme/                # Ionic theme variables
-│   ├── global.scss           # Global styles
-│   └── index.html            # Entry HTML
-├── android/                  # Android native project
-├── www/                      # Built web assets
-├── capacitor.config.json     # Capacitor configuration
-├── angular.json              # Angular CLI configuration
-└── package.json              # Dependencies
+│   │   ├── models/              # TypeScript interfaces
+│   │   ├── pages/               # App pages/screens
+│   │   │   ├── home/            # Main gallery view
+│   │   │   ├── albums/          # Albums list
+│   │   │   ├── album-detail/    # Individual album view
+│   │   │   └── viewer/          # Fullscreen media viewer
+│   │   ├── services/            # Business logic
+│   │   │   ├── photo.service.ts # Legacy photo service
+│   │   │   └── media.service.ts # New MediaStore service
+│   │   ├── plugins/             # Custom Capacitor plugins
+│   │   │   └── media-store.plugin.ts
+│   │   └── app.*                # Root module and routing
+│   ├── theme/                   # Ionic theme variables
+│   └── global.scss              # Global styles
+├── android/                     # Android native project
+│   └── app/src/main/java/com/gallery/app/
+│       ├── MainActivity.java
+│       └── MediaStorePlugin.java  # Native MediaStore integration
+├── www/                         # Built web assets (gitignored)
+└── capacitor.config.json        # Capacitor configuration
 ```
 
 ## Permissions
 
 The app requires the following Android permissions:
-- `CAMERA` - To take photos
-- `READ_EXTERNAL_STORAGE` - To read photos from gallery
-- `WRITE_EXTERNAL_STORAGE` - To save photos (Android 12 and below)
-- `READ_MEDIA_IMAGES` - To read images (Android 13+)
 
-Permissions are requested at runtime when needed.
+### Android 13+ (API 33+)
+- `READ_MEDIA_IMAGES` - To read images from device
+- `READ_MEDIA_VIDEO` - To read videos from device
+- `CAMERA` - To take photos (optional)
+
+### Android 5.1 to 12 (API 22-32)
+- `READ_EXTERNAL_STORAGE` - To read media files
+- `WRITE_EXTERNAL_STORAGE` - To save photos (API ≤32)
+- `CAMERA` - To take photos (optional)
+
+Permissions are requested at runtime when needed with user-friendly dialogs.
 
 ## Usage Guide
 
+### First Launch
+1. App prompts to scan device for media
+2. Grant storage permissions
+3. App automatically scans and displays all photos/videos
+4. Albums are auto-generated from device folders
+
+### Viewing Media
+- Tap any photo/video to open fullscreen viewer
+- Pinch to zoom on images
+- Swipe left/right to navigate
+- Videos play with native controls
+
+### Filtering & Sorting
+- Tap filter icon in header
+- Choose: All Media, Images Only, or Videos Only
+- Select sort option: Date, Name, or Size
+
+### Albums
+- Tap albums icon to view all folders
+- Auto-detected folders show folder icon badge
+- Custom albums show edit icon badge
+- Create custom albums with "+" button
+
 ### Taking Photos
-1. Tap the "+" floating action button on the home screen
-2. Select "Take Photo" to use camera or "Choose from Gallery" to import
-3. Photo will appear in the gallery
+- Tap "+" button on home screen
+- Select "Take Photo" to use camera
+- Or "Scan Device Media" to refresh media library
 
-### Creating Albums
-1. Tap the albums icon in the header
-2. Tap the "+" button
-3. Enter album name and tap "Create"
+## Architecture
 
-### Adding Photos to Albums
-1. From the main gallery, tap on a photo
-2. Select "Add to Album"
-3. Choose the album
+### Native Layer (Java)
+- **MediaStorePlugin**: Custom Capacitor plugin
+  - Scans device media using ContentResolver
+  - Generates thumbnails using MediaStore APIs
+  - Observes media changes with ContentObserver
+  - Handles permissions for Android 11+
 
-### Sorting Photos
-1. Tap the filter icon in the header
-2. Select your preferred sorting option
+### Service Layer (TypeScript)
+- **MediaService**: Main media management
+  - Handles MediaStore communication
+  - Implements thumbnail caching
+  - Manages media change listener
+  - Provides filtered and sorted media
+- **PhotoService**: Legacy support
+  - Maintains custom albums
+  - Handles camera integration
 
-### Deleting Photos
-1. Tap on a photo
-2. Select "Delete"
-3. Confirm deletion
+### UI Layer (Angular/Ionic)
+- **HomePage**: Main gallery with virtual scrolling
+- **AlbumsPage**: Shows auto and custom albums
+- **ViewerPage**: Fullscreen viewer with gestures
+- **Responsive Design**: Adapts to all screen sizes
+
+## Performance Optimizations
+
+1. **Lazy Loading**: Media loaded in batches of 50
+2. **Thumbnail Queue**: Background loading prevents UI freeze
+3. **TrackBy Function**: Efficient Angular change detection
+4. **Native Thumbnails**: Uses Android's optimized thumbnail generation
+5. **Content Observer**: Real-time updates without polling
+6. **Scroll Detection**: Loads more as user scrolls
+7. **Indexed Queries**: Direct MediaStore access (no file system scanning)
 
 ## Known Limitations
 
 - Camera functionality only works on real Android devices
-- Photos are stored locally (no cloud sync)
-- No photo editing features (this is a gallery/organizer app)
+- Full-resolution images loaded on demand in viewer only
+- Thumbnail cache limited to 100 most recent items
+- Custom albums are app-local (not device-wide)
 
 ## Troubleshooting
 
@@ -192,13 +273,21 @@ Permissions are requested at runtime when needed.
 - Clear the build cache: `rm -rf www node_modules && npm install && npm run build`
 - Sync Capacitor: `npx cap sync android`
 
-### Camera Not Working
-- Ensure you're testing on a real device (not browser/emulator without camera)
-- Check that camera permissions are granted in Android settings
+### Permissions Not Working
+- Check AndroidManifest.xml has all required permissions
+- Ensure app has permissions granted in Android settings
+- Try uninstalling and reinstalling the app
 
-### Photos Not Persisting
-- Check browser/device storage permissions
-- Ensure the app has storage permissions granted
+### Media Not Showing
+- Ensure permissions are granted
+- Try "Scan Device Media" from home screen
+- Check if device has actual photos/videos
+- Verify MediaStore is accessible
+
+### Thumbnails Not Loading
+- Check network/storage permissions
+- Clear app cache in Android settings
+- Thumbnails load in background, give it time
 
 ## License
 
@@ -207,3 +296,7 @@ MIT
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Support
+
+For issues and questions, please use the GitHub issue tracker.
