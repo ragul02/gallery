@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { Camera, CameraResultType, CameraSource, Photo as CameraPhoto } from '@capacitor/camera';
+import { Camera, CameraResultType, CameraSource, Photo as CameraPhoto, GalleryPhotos } from '@capacitor/camera';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Preferences } from '@capacitor/preferences';
 import { Photo, Album, SortType } from '../models/gallery.model';
@@ -12,6 +12,7 @@ export class PhotoService {
   private albums: Album[] = [];
   private PHOTO_STORAGE = 'photos';
   private ALBUM_STORAGE = 'albums';
+  private INITIAL_SCAN_KEY = 'initial_scan_done';
 
   constructor() {
     this.loadSaved();
@@ -33,12 +34,101 @@ export class PhotoService {
 
     // Load photo data from filesystem
     for (let photo of this.photos) {
-      const readFile = await Filesystem.readFile({
-        path: photo.filepath,
-        directory: Directory.Data
-      });
-      photo.webviewPath = `data:image/jpeg;base64,${readFile.data}`;
+      try {
+        const readFile = await Filesystem.readFile({
+          path: photo.filepath,
+          directory: Directory.Data
+        });
+        photo.webviewPath = `data:image/jpeg;base64,${readFile.data}`;
+      } catch (error) {
+        console.error('Error loading photo:', photo.filepath, error);
+      }
     }
+  }
+
+  // Check if initial scan has been done
+  async hasCompletedInitialScan(): Promise<boolean> {
+    const result = await Preferences.get({ key: this.INITIAL_SCAN_KEY });
+    return result.value === 'true';
+  }
+
+  // Mark initial scan as complete
+  private async markInitialScanComplete() {
+    await Preferences.set({
+      key: this.INITIAL_SCAN_KEY,
+      value: 'true'
+    });
+  }
+
+  // Import multiple photos from device gallery
+  async importPhotosFromDevice(): Promise<number> {
+    try {
+      const result: GalleryPhotos = await Camera.pickImages({
+        quality: 90,
+        limit: 0 // 0 means no limit - user can select multiple
+      });
+
+      let importedCount = 0;
+
+      if (result.photos && result.photos.length > 0) {
+        for (const photo of result.photos) {
+          try {
+            const savedPhoto = await this.saveGalleryPicture(photo);
+            this.photos.unshift(savedPhoto);
+            importedCount++;
+          } catch (error) {
+            console.error('Error importing photo:', error);
+          }
+        }
+
+        await this.savePhotos();
+        await this.markInitialScanComplete();
+      }
+
+      return importedCount;
+    } catch (error) {
+      console.error('Error picking images:', error);
+      // If user cancels, mark as complete anyway so we don't keep asking
+      await this.markInitialScanComplete();
+      return 0;
+    }
+  }
+
+  // Save a gallery picture (from pickImages)
+  private async saveGalleryPicture(photo: any): Promise<Photo> {
+    const base64Data = await this.readGalleryPhotoAsBase64(photo);
+    const fileName = new Date().getTime() + '.jpeg';
+    
+    await Filesystem.writeFile({
+      path: fileName,
+      data: base64Data,
+      directory: Directory.Data
+    });
+
+    // Calculate size from base64 data
+    const sizeInBytes = Math.round((base64Data.length * 3) / 4);
+
+    return {
+      id: fileName,
+      filepath: fileName,
+      webviewPath: photo.webPath,
+      name: fileName,
+      dateTaken: new Date(),
+      base64: base64Data,
+      size: sizeInBytes
+    };
+  }
+
+  // Convert gallery photo to base64
+  private async readGalleryPhotoAsBase64(photo: any): Promise<string> {
+    if (!photo.webPath) {
+      throw new Error('Photo webPath is not available');
+    }
+
+    const response = await fetch(photo.webPath);
+    const blob = await response.blob();
+
+    return await this.convertBlobToBase64(blob) as string;
   }
 
   // Take a new photo

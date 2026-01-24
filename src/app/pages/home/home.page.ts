@@ -1,5 +1,5 @@
 import { Component, OnInit } from '@angular/core';
-import { ActionSheetController, AlertController } from '@ionic/angular';
+import { ActionSheetController, AlertController, LoadingController } from '@ionic/angular';
 import { PhotoService } from '../../services/photo.service';
 import { Photo, SortType } from '../../models/gallery.model';
 
@@ -17,15 +17,74 @@ export class HomePage implements OnInit {
   constructor(
     public photoService: PhotoService,
     public actionSheetController: ActionSheetController,
-    private alertController: AlertController
+    private alertController: AlertController,
+    private loadingController: LoadingController
   ) {}
 
-  ngOnInit() {
+  async ngOnInit() {
     this.loadPhotos();
+    await this.checkInitialScan();
   }
 
   ionViewWillEnter() {
     this.loadPhotos();
+  }
+
+  // Check if we need to prompt for initial photo import
+  async checkInitialScan() {
+    const hasScanned = await this.photoService.hasCompletedInitialScan();
+    
+    if (!hasScanned) {
+      // Show welcome dialog
+      const alert = await this.alertController.create({
+        header: 'Welcome to Gallery!',
+        message: 'Would you like to import existing photos and videos from your device?',
+        buttons: [
+          {
+            text: 'Not Now',
+            role: 'cancel',
+            handler: async () => {
+              // Mark as complete even if user skips
+              await this.photoService.importPhotosFromDevice();
+            }
+          },
+          {
+            text: 'Import Photos',
+            handler: async () => {
+              await this.importDevicePhotos();
+            }
+          }
+        ],
+        backdropDismiss: false
+      });
+      await alert.present();
+    }
+  }
+
+  // Import photos from device
+  async importDevicePhotos() {
+    const loading = await this.loadingController.create({
+      message: 'Importing photos...',
+    });
+    await loading.present();
+
+    try {
+      const count = await this.photoService.importPhotosFromDevice();
+      await loading.dismiss();
+
+      if (count > 0) {
+        this.loadPhotos();
+        const alert = await this.alertController.create({
+          header: 'Success!',
+          message: `Imported ${count} photo${count !== 1 ? 's' : ''} successfully.`,
+          buttons: ['OK']
+        });
+        await alert.present();
+      }
+    } catch (error) {
+      await loading.dismiss();
+      console.error('Error importing photos:', error);
+    }
   }
 
   loadPhotos() {
@@ -48,6 +107,13 @@ export class HomePage implements OnInit {
           icon: 'images',
           handler: () => {
             this.chooseFromGallery();
+          }
+        },
+        {
+          text: 'Import Multiple Photos',
+          icon: 'albums',
+          handler: () => {
+            this.importDevicePhotos();
           }
         },
         {
