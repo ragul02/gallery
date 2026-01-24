@@ -80,13 +80,17 @@ export class PhotoService {
       directory: Directory.Data
     });
 
+    // Calculate size from base64 data
+    const sizeInBytes = Math.round((base64Data.length * 3) / 4);
+
     return {
       id: fileName,
       filepath: fileName,
       webviewPath: photo.webPath,
       name: fileName,
       dateTaken: new Date(),
-      base64: base64Data
+      base64: base64Data,
+      size: sizeInBytes
     };
   }
 
@@ -96,7 +100,11 @@ export class PhotoService {
       return photo.base64String;
     }
 
-    const response = await fetch(photo.webPath!);
+    if (!photo.webPath) {
+      throw new Error('Photo webPath is not available');
+    }
+
+    const response = await fetch(photo.webPath);
     const blob = await response.blob();
 
     return await this.convertBlobToBase64(blob) as string;
