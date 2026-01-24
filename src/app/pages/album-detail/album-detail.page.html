@@ -1,0 +1,36 @@
+<ion-header [translucent]="true">
+  <ion-toolbar>
+    <ion-buttons slot="start">
+      <ion-back-button defaultHref="/albums"></ion-back-button>
+    </ion-buttons>
+    <ion-title>{{ album?.name }}</ion-title>
+    <ion-buttons slot="end">
+      <ion-button (click)="showSortOptions()">
+        <ion-icon slot="icon-only" name="funnel"></ion-icon>
+      </ion-button>
+    </ion-buttons>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content [fullscreen]="true">
+  <ion-header collapse="condense">
+    <ion-toolbar>
+      <ion-title size="large">{{ album?.name }}</ion-title>
+    </ion-toolbar>
+  </ion-header>
+
+  <div class="photo-grid" *ngIf="photos.length > 0">
+    <ion-card *ngFor="let photo of photos" (click)="showPhotoActions(photo)">
+      <img [src]="photo.webviewPath" />
+      <ion-card-content>
+        <p class="photo-date">{{ photo.dateTaken | date:'short' }}</p>
+      </ion-card-content>
+    </ion-card>
+  </div>
+
+  <div class="empty-state" *ngIf="photos.length === 0">
+    <ion-icon name="images-outline"></ion-icon>
+    <h2>No Photos in Album</h2>
+    <p>Add photos to this album from the main gallery</p>
+  </div>
+</ion-content>

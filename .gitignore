@@ -1,0 +1,45 @@
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Build
+www/
+dist/
+out-tsc/
+.angular/
+
+# Android - keep the project structure but ignore build artifacts
+android/.gradle
+android/build
+android/app/build
+android/.idea
+android/local.properties
+*.apk
+*.aab
+
+# iOS
+ios/
+*.ipa
+
+# Capacitor
+.capacitor/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/

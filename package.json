@@ -1,0 +1,45 @@
+{
+  "name": "gallery",
+  "version": "1.0.0",
+  "description": "Ionic Gallery App with Albums and Sorting",
+  "main": "index.js",
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "build": "ng build",
+    "watch": "ng build --watch --configuration development",
+    "ionic:build": "ng build",
+    "ionic:serve": "ng serve"
+  },
+  "keywords": ["ionic", "angular", "gallery", "capacitor", "android"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@angular/common": "^17.3.12",
+    "@angular/compiler": "^17.3.12",
+    "@angular/core": "^17.3.12",
+    "@angular/forms": "^17.3.12",
+    "@angular/platform-browser": "^17.3.12",
+    "@angular/platform-browser-dynamic": "^17.3.12",
+    "@angular/router": "^17.3.12",
+    "@capacitor/android": "^5.7.8",
+    "@capacitor/camera": "^5.0.10",
+    "@capacitor/cli": "^5.7.8",
+    "@capacitor/core": "^5.7.8",
+    "@capacitor/filesystem": "^5.2.2",
+    "@capacitor/preferences": "^5.0.8",
+    "@ionic/angular": "^7.8.6",
+    "ionicons": "^7.4.0",
+    "rxjs": "^7.8.2",
+    "tslib": "^2.8.1",
+    "zone.js": "^0.14.10"
+  },
+  "devDependencies": {
+    "@angular-devkit/build-angular": "^17.3.17",
+    "@angular/cli": "^17.3.17",
+    "@angular/compiler-cli": "^17.3.12",
+    "@ionic/angular-toolkit": "^11.0.1",
+    "@types/node": "^25.0.10",
+    "typescript": "5.2"
+  }
+}
