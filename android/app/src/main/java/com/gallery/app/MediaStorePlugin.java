@@ -479,7 +479,7 @@ public class MediaStorePlugin extends Plugin {
         call.resolve(result);
     }
 
-    private boolean hasRequiredPermissions() {
+    public boolean hasRequiredPermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             return ContextCompat.checkSelfPermission(
                 getContext(), 
