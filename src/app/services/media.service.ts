@@ -61,7 +61,16 @@ export class MediaService {
    */
   async requestPermissions(): Promise<boolean> {
     try {
-      const result = await MediaStore.requestPermissions();
+      let result = await MediaStore.checkPermissions();
+
+      if (this.hasMissingMediaPermission(result)) {
+        result = await MediaStore.requestPermissions();
+      }
+
+      if (result.images === true && result.video === false) {
+        result = await MediaStore.requestPermissions();
+      }
+
       this.hasPermission = result.granted;
       
       if (result.granted) {
@@ -76,6 +85,19 @@ export class MediaService {
       console.error('Error requesting permissions:', error);
       return false;
     }
+  }
+
+  private hasMissingMediaPermission(result: {
+    granted: boolean;
+    images?: boolean;
+    video?: boolean;
+    storage?: boolean;
+  }): boolean {
+    if (result.images !== undefined || result.video !== undefined) {
+      return result.images !== true || result.video !== true;
+    }
+
+    return result.storage !== true;
   }
 
   /**

@@ -83,10 +83,7 @@ export class HomePage implements OnInit, OnDestroy {
   }
 
   async scanDeviceMedia(showPermissionMessage = true, forceRefresh = true) {
-    let granted = await this.mediaService.checkPermissions();
-    if (!granted) {
-      granted = await this.mediaService.requestPermissions();
-    }
+    const granted = await this.mediaService.requestPermissions();
     
     if (!granted) {
       this.hasPermission = false;
