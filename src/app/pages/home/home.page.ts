@@ -52,6 +52,8 @@ export class HomePage implements OnInit, OnDestroy {
   }
 
   async ionViewWillEnter() {
+    await this.photoService.whenReady();
+
     // Check for album filter from query params
     const albumFilter = this.router.routerState.snapshot.root.queryParams['album'];
     if (albumFilter) {
@@ -66,73 +68,37 @@ export class HomePage implements OnInit, OnDestroy {
   }
 
   async initializeGallery() {
+    await this.photoService.whenReady();
+    this.loadLegacyPhotos();
+
     // Check if initial scan has been done
     const hasScanned = await this.mediaService.hasCompletedInitialScan();
-    
+
+    this.hasPermission = await this.mediaService.checkPermissions();
     if (!hasScanned) {
-      await this.promptInitialScan();
-    } else {
-      // Check permissions
-      this.hasPermission = await this.mediaService.checkPermissions();
-      
-      if (this.hasPermission) {
-        await this.loadMediaFromStore();
-      } else {
-        // Fall back to legacy photos
-        this.loadLegacyPhotos();
-      }
+      await this.scanDeviceMedia(false);
+    } else if (this.hasPermission) {
+      await this.scanDeviceMedia(false, false);
     }
   }
 
-  async promptInitialScan() {
-    const alert = await this.alertController.create({
-      header: 'Welcome to Gallery!',
-      message: 'Would you like to scan your device for photos and videos? This app will automatically organize your media into albums.',
-      buttons: [
-        {
-          text: 'Not Now',
-          role: 'cancel',
-          handler: () => {
-            this.loadLegacyPhotos();
-          }
-        },
-        {
-          text: 'Scan Device',
-          handler: async () => {
-            await this.scanDeviceMedia();
-          }
-        }
-      ],
-      backdropDismiss: false
-    });
-    await alert.present();
-  }
-
-  async scanDeviceMedia() {
-    // Request permissions first
-    const granted = await this.mediaService.requestPermissions();
+  async scanDeviceMedia(showPermissionMessage = true, forceRefresh = true) {
+    let granted = await this.mediaService.checkPermissions();
+    if (!granted) {
+      granted = await this.mediaService.requestPermissions();
+    }
     
     if (!granted) {
-      const alert = await this.alertController.create({
-        header: 'Permission Required',
-        message: 'Please grant storage permission to scan your photos and videos. You can change this in app settings.',
-        buttons: [
-          {
-            text: 'Cancel',
-            role: 'cancel',
-            handler: () => {
-              this.loadLegacyPhotos();
-            }
-          },
-          {
-            text: 'Try Again',
-            handler: async () => {
-              await this.scanDeviceMedia();
-            }
-          }
-        ]
-      });
-      await alert.present();
+      this.hasPermission = false;
+      this.loadLegacyPhotos();
+      if (showPermissionMessage) {
+        const alert = await this.alertController.create({
+          header: 'Permission Required',
+          message: 'Allow photo and video access to scan your device media. You can change this in app settings.',
+          buttons: ['OK']
+        });
+        await alert.present();
+      }
       return;
     }
 
@@ -146,24 +112,14 @@ export class HomePage implements OnInit, OnDestroy {
     await loading.present();
 
     try {
-      let loadedCount = 0;
       await this.mediaService.scanAllMedia({
-        forceRefresh: true,
-        progressCallback: (loaded, total) => {
-          loadedCount = loaded;
+        forceRefresh,
+        progressCallback: (loaded) => {
           loading.message = `Found ${loaded} media files...`;
         }
       });
 
       await loading.dismiss();
-
-      // Show success message
-      const successAlert = await this.alertController.create({
-        header: 'Scan Complete!',
-        message: `Found ${loadedCount} photos and videos on your device.`,
-        buttons: ['OK']
-      });
-      await successAlert.present();
 
       // Load the media
       await this.loadMediaFromStore();
@@ -296,6 +252,12 @@ export class HomePage implements OnInit, OnDestroy {
 
   loadLegacyPhotos() {
     this.photos = this.photoService.getPhotos(this.currentSort as any);
+  }
+
+  openPhotoViewer(photo: Photo) {
+    this.router.navigate(['/viewer', photo.id], {
+      queryParams: { source: 'local' }
+    });
   }
 
   async openMediaViewer(media: MediaItemView) {
@@ -436,4 +398,3 @@ export class HomePage implements OnInit, OnDestroy {
     return media.id;
   }
 }
-

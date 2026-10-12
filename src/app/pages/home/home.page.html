@@ -72,23 +72,30 @@
     </div>
   </div>
 
-  <!-- Legacy photo grid (fallback) -->
-  <div class="photo-grid" *ngIf="!hasPermission && photos.length > 0">
-    <ion-card *ngFor="let photo of photos">
-      <img [src]="photo.webviewPath" />
+  <!-- Photos captured or imported into this app are stored separately from device media. -->
+  <div class="photo-grid" *ngIf="photos.length > 0">
+    <ion-card *ngFor="let photo of photos" button (click)="openPhotoViewer(photo)">
+      <img [src]="photo.webviewPath" [alt]="photo.name" />
       <ion-card-content>
         <p class="photo-date">{{ photo.dateTaken | date:'short' }}</p>
       </ion-card-content>
     </ion-card>
   </div>
 
+  <div class="permission-state" *ngIf="!isLoading && !hasPermission">
+    <p>Allow photo and video access to view media on your device.</p>
+    <ion-button (click)="scanDeviceMedia()">
+      <ion-icon slot="start" name="images"></ion-icon>
+      Grant Media Access
+    </ion-button>
+  </div>
+
   <!-- Empty state -->
-  <div class="empty-state" *ngIf="!isLoading && (!hasPermission && photos.length === 0) || (hasPermission && displayedMedia.length === 0)">
+  <div class="empty-state" *ngIf="!isLoading && hasPermission && displayedMedia.length === 0 && photos.length === 0">
     <ion-icon name="images-outline"></ion-icon>
     <h2>No Media Found</h2>
-    <p *ngIf="!hasPermission">Grant permissions to scan your device for photos and videos.</p>
-    <p *ngIf="hasPermission">Your device doesn't have any photos or videos yet.</p>
-    <ion-button (click)="scanDeviceMedia()" *ngIf="hasPermission">
+    <p>Your device doesn't have any photos or videos yet.</p>
+    <ion-button (click)="scanDeviceMedia()">
       <ion-icon slot="start" name="refresh"></ion-icon>
       Rescan Device
     </ion-button>
@@ -100,4 +107,3 @@
     </ion-fab-button>
   </ion-fab>
 </ion-content>
-

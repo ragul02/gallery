@@ -1,7 +1,9 @@
 import { Component, OnInit, ViewChild, ElementRef } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { MediaService, MediaSortType } from '../../services/media.service';
+import { PhotoService } from '../../services/photo.service';
 import { MediaItem } from '../../plugins/media-store.plugin';
+import { Photo } from '../../models/gallery.model';
 import { GestureController, Platform } from '@ionic/angular';
 
 @Component({
@@ -14,7 +16,9 @@ export class ViewerPage implements OnInit {
   @ViewChild('imageContainer', { read: ElementRef }) imageContainer!: ElementRef;
   
   currentMedia: MediaItem | null = null;
+  currentPhoto: Photo | null = null;
   allMedia: MediaItem[] = [];
+  localPhotos: Photo[] = [];
   currentIndex = 0;
   thumbnailUrl = '';
   showControls = true;
@@ -30,6 +34,7 @@ export class ViewerPage implements OnInit {
     private route: ActivatedRoute,
     private router: Router,
     private mediaService: MediaService,
+    private photoService: PhotoService,
     private gestureCtrl: GestureController,
     private platform: Platform
   ) {}
@@ -41,6 +46,19 @@ export class ViewerPage implements OnInit {
 
     if (!mediaId) {
       this.router.navigate(['/home']);
+      return;
+    }
+
+    if (this.route.snapshot.queryParamMap.get('source') === 'local') {
+      await this.photoService.whenReady();
+      this.localPhotos = this.photoService.getPhotos();
+      const photoIndex = this.localPhotos.findIndex(photo => photo.id === mediaId);
+      if (photoIndex < 0) {
+        await this.router.navigate(['/home']);
+        return;
+      }
+
+      this.loadLocalPhoto(photoIndex);
       return;
     }
 
@@ -69,6 +87,7 @@ export class ViewerPage implements OnInit {
     }
 
     this.currentIndex = index;
+    this.currentPhoto = null;
     this.currentMedia = this.allMedia[index];
     this.resetZoom();
 
@@ -81,6 +100,18 @@ export class ViewerPage implements OnInit {
     } catch (error) {
       console.error('Error loading thumbnail:', error);
     }
+  }
+
+  loadLocalPhoto(index: number) {
+    if (index < 0 || index >= this.localPhotos.length) {
+      return;
+    }
+
+    this.currentIndex = index;
+    this.currentPhoto = this.localPhotos[index];
+    this.currentMedia = null;
+    this.thumbnailUrl = this.currentPhoto.webviewPath || '';
+    this.resetZoom();
   }
 
   setupGestures() {
@@ -150,13 +181,17 @@ export class ViewerPage implements OnInit {
   }
 
   async nextMedia() {
-    if (this.currentIndex < this.allMedia.length - 1) {
+    if (this.currentPhoto && this.currentIndex < this.localPhotos.length - 1) {
+      this.loadLocalPhoto(this.currentIndex + 1);
+    } else if (!this.currentPhoto && this.currentIndex < this.allMedia.length - 1) {
       await this.loadMedia(this.currentIndex + 1);
     }
   }
 
   async previousMedia() {
-    if (this.currentIndex > 0) {
+    if (this.currentPhoto && this.currentIndex > 0) {
+      this.loadLocalPhoto(this.currentIndex - 1);
+    } else if (!this.currentPhoto && this.currentIndex > 0) {
       await this.loadMedia(this.currentIndex - 1);
     }
   }
@@ -166,7 +201,7 @@ export class ViewerPage implements OnInit {
   }
 
   get canGoNext(): boolean {
-    return this.currentIndex < this.allMedia.length - 1;
+    return this.currentIndex < (this.currentPhoto ? this.localPhotos.length : this.allMedia.length) - 1;
   }
 
   get canGoPrevious(): boolean {
@@ -174,6 +209,7 @@ export class ViewerPage implements OnInit {
   }
 
   get mediaCounter(): string {
-    return `${this.currentIndex + 1} / ${this.allMedia.length}`;
+    const count = this.currentPhoto ? this.localPhotos.length : this.allMedia.length;
+    return `${this.currentIndex + 1} / ${count}`;
   }
 }
