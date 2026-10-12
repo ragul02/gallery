@@ -109,6 +109,7 @@ export class MediaService {
       return this.mediaItems;
     }
 
+    this.hasPermission = await this.checkPermissions();
     if (!this.hasPermission) {
       const granted = await this.requestPermissions();
       if (!granted) {
@@ -119,17 +120,15 @@ export class MediaService {
     this.isScanning = true;
 
     try {
-      // Load from cache first if not forcing refresh
       if (!options?.forceRefresh) {
         const cached = await this.loadCachedMedia();
         if (cached.length > 0) {
           this.mediaItems = cached;
-          this.isScanning = false;
+          await this.markInitialScanComplete();
           return cached;
         }
       }
 
-      // Scan media in batches
       const batchSize = 100;
       let offset = 0;
       let allMedia: MediaItem[] = [];
@@ -138,32 +137,21 @@ export class MediaService {
       while (hasMore) {
         const result = await MediaStore.scanMedia({
           limit: batchSize,
-          offset: offset,
+          offset,
           mediaType: 'all'
         });
 
-        // Flatten the nested array structure
-        const flatMedia: MediaItem[] = [];
-        if (result.media && Array.isArray(result.media)) {
-          for (const batch of result.media) {
-            if (Array.isArray(batch)) {
-              flatMedia.push(...batch);
-            }
-          }
-        }
-
+        const flatMedia = this.normalizeMediaList(result);
         if (flatMedia.length === 0) {
           hasMore = false;
         } else {
           allMedia = allMedia.concat(flatMedia);
           offset += batchSize;
 
-          // Report progress
           if (options?.progressCallback) {
             options.progressCallback(allMedia.length, allMedia.length);
           }
 
-          // Stop if we got fewer than batchSize items
           if (flatMedia.length < batchSize) {
             hasMore = false;
           }
@@ -171,11 +159,8 @@ export class MediaService {
       }
 
       this.mediaItems = allMedia;
-      
-      // Cache the results
       await this.cacheMedia(allMedia);
       await this.markInitialScanComplete();
-
       return allMedia;
     } catch (error) {
       console.error('Error scanning media:', error);
@@ -195,19 +180,19 @@ export class MediaService {
   ): MediaItem[] {
     let filtered = [...this.mediaItems];
 
-    // Apply filters
     if (filter?.type && filter.type !== 'all') {
       filtered = filtered.filter(item => item.type === filter.type);
     }
 
     if (filter?.album) {
-      filtered = filtered.filter(item => item.bucket === filter.album);
+      filtered = filtered.filter(item => {
+        const albumKey = (item as MediaItem & { bucketId?: string }).bucketId ?? item.bucket;
+        return albumKey === filter.album || item.bucket === filter.album;
+      });
     }
 
-    // Apply sorting
     filtered = this.sortMedia(filtered, sortType);
 
-    // Apply limit
     if (limit) {
       filtered = filtered.slice(0, limit);
     }
@@ -221,17 +206,17 @@ export class MediaService {
   private sortMedia(items: MediaItem[], sortType: MediaSortType): MediaItem[] {
     switch (sortType) {
       case MediaSortType.DATE_DESC:
-        return items.sort((a, b) => b.dateTaken - a.dateTaken);
+        return items.sort((a, b) => (Number(b.dateTaken) || 0) - (Number(a.dateTaken) || 0));
       case MediaSortType.DATE_ASC:
-        return items.sort((a, b) => a.dateTaken - b.dateTaken);
+        return items.sort((a, b) => (Number(a.dateTaken) || 0) - (Number(b.dateTaken) || 0));
       case MediaSortType.NAME_ASC:
-        return items.sort((a, b) => a.name.localeCompare(b.name));
+        return items.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       case MediaSortType.NAME_DESC:
-        return items.sort((a, b) => b.name.localeCompare(a.name));
+        return items.sort((a, b) => (b.name || '').localeCompare(a.name || ''));
       case MediaSortType.SIZE_DESC:
-        return items.sort((a, b) => b.size - a.size);
+        return items.sort((a, b) => (Number(b.size) || 0) - (Number(a.size) || 0));
       case MediaSortType.SIZE_ASC:
-        return items.sort((a, b) => a.size - b.size);
+        return items.sort((a, b) => (Number(a.size) || 0) - (Number(b.size) || 0));
       default:
         return items;
     }
@@ -344,13 +329,41 @@ export class MediaService {
   private async loadCachedMedia(): Promise<MediaItem[]> {
     try {
       const result = await Preferences.get({ key: this.CACHE_KEY });
-      if (result.value) {
-        return JSON.parse(result.value);
+      if (!result.value) {
+        return [];
+      }
+
+      const parsed = JSON.parse(result.value);
+      if (Array.isArray(parsed)) {
+        return parsed as MediaItem[];
+      }
+
+      if (parsed && Array.isArray(parsed.media)) {
+        return this.normalizeMediaList(parsed as { media?: MediaItem[] });
       }
     } catch (error) {
       console.error('Error loading cached media:', error);
     }
     return [];
+  }
+
+  private normalizeMediaList(result: { media?: MediaItem[] | ArrayLike<MediaItem> } | MediaItem[] | null | undefined): MediaItem[] {
+    const entries = Array.isArray(result) ? result : result?.media ?? [];
+    const items: MediaItem[] = [];
+
+    for (const entry of Array.from(entries as ArrayLike<MediaItem>)) {
+      if (!entry) {
+        continue;
+      }
+
+      if (Array.isArray(entry)) {
+        items.push(...entry);
+      } else {
+        items.push(entry as MediaItem);
+      }
+    }
+
+    return items.filter(Boolean);
   }
 
   /**

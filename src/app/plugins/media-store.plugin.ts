@@ -19,7 +19,7 @@ export interface MediaStorePlugin {
     limit?: number; 
     offset?: number; 
     mediaType?: 'image' | 'video' | 'all' 
-  }): Promise<{ media: MediaItem[][]; count: number }>;
+  }): Promise<{ media: MediaItem[]; count: number }>;
 
   /**
    * Get thumbnail for a media item
@@ -61,6 +61,7 @@ export interface MediaStorePlugin {
 
 export interface MediaItem {
   id: string;
+  key?: string;
   name: string;
   dateTaken: number;
   size: number;
@@ -68,6 +69,7 @@ export interface MediaItem {
   path: string;
   type: 'image' | 'video';
   bucket: string;
+  bucketId?: string;
   width: number;
   height: number;
   duration?: number; // Only for videos
