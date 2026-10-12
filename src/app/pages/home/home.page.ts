@@ -71,15 +71,15 @@ export class HomePage implements OnInit, OnDestroy {
     await this.photoService.whenReady();
     this.loadLegacyPhotos();
 
-    // Check if initial scan has been done
     const hasScanned = await this.mediaService.hasCompletedInitialScan();
-
     this.hasPermission = await this.mediaService.checkPermissions();
-    if (!hasScanned) {
-      await this.scanDeviceMedia(false);
-    } else if (this.hasPermission) {
+
+    if (!this.hasPermission) {
       await this.scanDeviceMedia(false, false);
+      return;
     }
+
+    await this.scanDeviceMedia(false, !hasScanned);
   }
 
   async scanDeviceMedia(showPermissionMessage = true, forceRefresh = true) {
