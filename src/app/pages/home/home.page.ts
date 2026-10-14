@@ -23,6 +23,7 @@ export class HomePage implements OnInit, OnDestroy {
   
   currentSort: MediaSortType = MediaSortType.DATE_DESC;
   currentFilter: MediaFilterType = MediaFilterType.ALL;
+  readonly MediaFilterType = MediaFilterType;
   sortTypes = SortType;
   
   isLoading = false;
@@ -207,7 +208,10 @@ export class HomePage implements OnInit, OnDestroy {
       
       // Queue thumbnails for loading
       newItems.forEach(item => {
-        if (!this.thumbnails.has(item.id)) {
+        const cachedThumbnail = this.thumbnails.get(item.id);
+        if (cachedThumbnail) {
+          item.thumbnailUrl = cachedThumbnail;
+        } else {
           this.thumbnailQueue.push(item);
         }
       });
@@ -396,6 +400,12 @@ export class HomePage implements OnInit, OnDestroy {
     this.currentBatch = 0;
     this.thumbnailQueue = [];
     await this.loadMediaFromStore();
+  }
+
+  async selectFilter(filter: MediaFilterType) {
+    if (this.currentFilter === filter) return;
+    this.currentFilter = filter;
+    await this.refreshMedia();
   }
 
   get totalMediaCount(): number {
