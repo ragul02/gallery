@@ -54,6 +54,21 @@
   color: var(--gallery-ink);
 }
 
+.gallery-summary {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 11px;
+  padding-inline: 2px;
+  color: var(--gallery-muted);
+  font-size: 12px;
+  font-weight: 600;
+
+  strong { color: var(--gallery-ink); font-weight: 750; }
+  ion-icon { margin-right: 4px; vertical-align: -2px; font-size: 14px; }
+  .summary-divider { width: 1px; height: 15px; background: #dedee7; }
+}
+
 .gallery-intro {
   display: flex;
   align-items: center;

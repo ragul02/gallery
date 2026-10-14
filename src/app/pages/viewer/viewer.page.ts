@@ -1,6 +1,7 @@
 import { Component, OnInit } from '@angular/core';
 import { Capacitor } from '@capacitor/core';
 import { ActivatedRoute, Router } from '@angular/router';
+import { ActionSheetController, AlertController } from '@ionic/angular';
 import { MediaService, MediaSortType } from '../../services/media.service';
 import { PhotoService } from '../../services/photo.service';
 import { MediaItem } from '../../plugins/media-store.plugin';
@@ -31,7 +32,9 @@ export class ViewerPage implements OnInit {
     private route: ActivatedRoute,
     private router: Router,
     private mediaService: MediaService,
-    private photoService: PhotoService
+    private photoService: PhotoService,
+    private actionSheetController: ActionSheetController,
+    private alertController: AlertController
   ) {}
 
   async ngOnInit() {
@@ -166,6 +169,64 @@ export class ViewerPage implements OnInit {
 
   close() {
     this.router.navigate(['/home']);
+  }
+
+  async showMediaMenu() {
+    const actionSheet = await this.actionSheetController.create({
+      header: 'Media options',
+      buttons: [
+        { text: 'Details', icon: 'information-circle-outline', handler: () => { void this.showMediaDetails(); } },
+        { text: 'Delete', icon: 'trash-outline', role: 'destructive', handler: () => { void this.deleteCurrentMedia(); } },
+        { text: 'Cancel', icon: 'close-outline', role: 'cancel' }
+      ]
+    });
+    await actionSheet.present();
+  }
+
+  async showMediaDetails() {
+    const item = this.currentMedia;
+    const photo = this.currentPhoto;
+    if (!item && !photo) return;
+
+    const date = item?.dateTaken || photo?.dateTaken;
+    const size = item?.size || photo?.size || 0;
+    const dimensions = item?.width && item?.height ? `${item.width} × ${item.height}` : '';
+    const details = [
+      `Type: ${item?.type === 'video' ? 'Video' : 'Photo'}`,
+      date ? `Date: ${(date instanceof Date ? date : new Date(date)).toLocaleString()}` : '',
+      dimensions ? `Dimensions: ${dimensions}` : '',
+      size ? `Size: ${(size / 1024 / 1024).toFixed(1)} MB` : '',
+      item?.type === 'video' && item.duration ? `Duration: ${(item.duration / 1000).toFixed(0)} sec` : ''
+    ].filter(Boolean).join('<br>');
+    const alert = await this.alertController.create({ header: item?.name || photo?.name || 'Media details', message: details, buttons: ['Done'] });
+    await alert.present();
+  }
+
+  async deleteCurrentMedia() {
+    if (this.currentMedia) {
+      try {
+        const deleted = await this.mediaService.deleteMedia([this.currentMedia]);
+        if (deleted) await this.close();
+      } catch (error) {
+        console.error('Error deleting media:', error);
+        const alert = await this.alertController.create({ header: 'Could not delete media', message: 'The device did not allow this item to be deleted.', buttons: ['OK'] });
+        await alert.present();
+      }
+      return;
+    }
+
+    if (this.currentPhoto) {
+      const photo = this.currentPhoto;
+      const confirm = await this.alertController.create({
+        header: 'Delete photo?',
+        message: 'This will permanently remove this photo from the app.',
+        buttons: [
+          { text: 'Cancel', role: 'cancel' },
+          { text: 'Delete', role: 'destructive', handler: () => { void this.photoService.deletePhoto(photo).then(() => this.close()); } }
+        ]
+      });
+      await confirm.present();
+    }
   }
 
   get canGoNext(): boolean {

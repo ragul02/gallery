@@ -48,23 +48,9 @@
       <span class="media-type-badge" *ngIf="currentMedia?.type === 'video'">
         <ion-icon name="videocam-outline"></ion-icon> VIDEO
       </span>
+      <button class="chrome-button menu-button" aria-label="Media options" (click)="showMediaMenu(); $event.stopPropagation()">
+        <ion-icon name="ellipsis-vertical"></ion-icon>
+      </button>
     </header>
-
-    <footer class="viewer-bottom">
-      <span class="detail-pill" *ngIf="currentPhoto?.dateTaken || currentMedia?.dateTaken">
-        <ion-icon name="calendar-outline"></ion-icon>
-        {{ (currentPhoto?.dateTaken || currentMedia?.dateTaken) | date:'mediumDate' }}
-      </span>
-      <span class="detail-pill" *ngIf="currentMedia?.width && currentMedia?.height">
-        <ion-icon name="scan-outline"></ion-icon>{{ currentMedia.width }} × {{ currentMedia.height }}
-      </span>
-      <span class="detail-pill" *ngIf="currentPhoto?.size || currentMedia?.size">
-        <ion-icon name="document-outline"></ion-icon>
-        {{ ((currentPhoto?.size || currentMedia?.size || 0) / 1024 / 1024).toFixed(1) }} MB
-      </span>
-      <span class="detail-pill" *ngIf="currentMedia?.type === 'video' && currentMedia.duration">
-        <ion-icon name="time-outline"></ion-icon>{{ (currentMedia.duration / 1000).toFixed(0) }} sec
-      </span>
-    </footer>
   </div>
 </ion-content>

@@ -5,6 +5,9 @@
     </div>
     <ion-title>{{ selectionMode ? selectedMediaKeys.size + ' selected' : 'Gallery' }}</ion-title>
     <ion-buttons slot="end" *ngIf="!selectionMode">
+      <ion-button class="toolbar-action" aria-label="Filter and sort" (click)="showSortOptions()">
+        <ion-icon slot="icon-only" name="funnel-outline"></ion-icon>
+      </ion-button>
       <ion-button class="toolbar-action" aria-label="Albums" routerLink="/albums">
         <ion-icon slot="icon-only" name="albums-outline"></ion-icon>
       </ion-button>
@@ -22,32 +25,12 @@
 
 <ion-content class="gallery-content" [scrollEvents]="true" (ionScroll)="onScroll($event)">
   <main class="gallery-page">
-    <section class="gallery-intro">
-      <div>
-        <p class="eyebrow">YOUR MOMENTS</p>
-        <h1>Your gallery</h1>
-        <p class="gallery-count" *ngIf="hasPermission">
-          {{ totalMediaCount }} {{ totalMediaCount === 1 ? 'memory' : 'memories' }}
-          <span *ngIf="videoCount > 0"> · {{ videoCount }} videos</span>
-        </p>
-        <p class="gallery-count" *ngIf="!hasPermission">A home for your favorite moments</p>
-      </div>
-      <button class="sort-shortcut" aria-label="Sort media" (click)="showSortOptions()" *ngIf="!selectionMode">
-        <ion-icon name="swap-vertical-outline"></ion-icon>
-      </button>
-    </section>
-
-    <nav class="filter-row" aria-label="Filter gallery">
-      <button class="filter-chip" [class.active]="currentFilter === MediaFilterType.ALL" (click)="selectFilter(MediaFilterType.ALL)">
-        <ion-icon name="grid-outline"></ion-icon><span>All</span>
-      </button>
-      <button class="filter-chip" [class.active]="currentFilter === MediaFilterType.IMAGES" (click)="selectFilter(MediaFilterType.IMAGES)">
-        <ion-icon name="image-outline"></ion-icon><span>Photos</span>
-      </button>
-      <button class="filter-chip" [class.active]="currentFilter === MediaFilterType.VIDEOS" (click)="selectFilter(MediaFilterType.VIDEOS)">
-        <ion-icon name="videocam-outline"></ion-icon><span>Videos</span>
-      </button>
-    </nav>
+    <div class="gallery-summary" *ngIf="hasPermission && !selectionMode">
+      <span><strong>{{ totalMediaCount }}</strong> {{ totalMediaCount === 1 ? 'item' : 'items' }}</span>
+      <span class="summary-divider" *ngIf="imageCount > 0 && videoCount > 0"></span>
+      <span *ngIf="imageCount > 0"><ion-icon name="image-outline"></ion-icon>{{ imageCount }}</span>
+      <span *ngIf="videoCount > 0"><ion-icon name="videocam-outline"></ion-icon>{{ videoCount }}</span>
+    </div>
 
     <div class="loading-state" *ngIf="isLoading">
       <ion-spinner name="crescent"></ion-spinner>

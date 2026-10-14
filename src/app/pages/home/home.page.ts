@@ -398,8 +398,23 @@ export class HomePage implements OnInit, OnDestroy {
 
   async showSortOptions() {
     const actionSheet = await this.actionSheetController.create({
-      header: 'Sort media',
+      header: 'Filter and sort',
       buttons: [
+        {
+          text: 'All media',
+          icon: this.currentFilter === MediaFilterType.ALL ? 'checkmark' : 'albums-outline',
+          handler: () => { void this.selectFilter(MediaFilterType.ALL); }
+        },
+        {
+          text: 'Photos',
+          icon: this.currentFilter === MediaFilterType.IMAGES ? 'checkmark' : 'image-outline',
+          handler: () => { void this.selectFilter(MediaFilterType.IMAGES); }
+        },
+        {
+          text: 'Videos',
+          icon: this.currentFilter === MediaFilterType.VIDEOS ? 'checkmark' : 'videocam-outline',
+          handler: () => { void this.selectFilter(MediaFilterType.VIDEOS); }
+        },
         {
           text: 'Date (Newest First)',
           icon: this.currentSort === MediaSortType.DATE_DESC ? 'checkmark' : 'calendar',
