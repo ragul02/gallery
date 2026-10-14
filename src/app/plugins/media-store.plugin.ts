@@ -82,6 +82,42 @@ export interface AlbumInfo {
   type: 'auto' | 'custom';
 }
 
+console.log('🔵 MediaStore Plugin: Registering plugin...');
 const MediaStore = registerPlugin<MediaStorePlugin>('MediaStore');
+console.log('🔵 MediaStore Plugin: Plugin registered:', MediaStore);
 
-export default MediaStore;
+// Add debugging wrapper
+const OriginalMediaStore = MediaStore;
+const DebugMediaStore = {
+  async checkPermissions() {
+    console.log('🔵 MediaStore.checkPermissions() called');
+    try {
+      const result = await OriginalMediaStore.checkPermissions();
+      console.log('🔵 MediaStore.checkPermissions() result:', result);
+      return result;
+    } catch (error) {
+      console.error('🔴 MediaStore.checkPermissions() error:', error);
+      throw error;
+    }
+  },
+  async requestPermissions() {
+    console.log('🔵 MediaStore.requestPermissions() called');
+    try {
+      const result = await OriginalMediaStore.requestPermissions();
+      console.log('🔵 MediaStore.requestPermissions() result:', result);
+      return result;
+    } catch (error) {
+      console.error('🔴 MediaStore.requestPermissions() error:', error);
+      throw error;
+    }
+  },
+  scanMedia: OriginalMediaStore.scanMedia,
+  getThumbnail: OriginalMediaStore.getThumbnail,
+  getAlbums: OriginalMediaStore.getAlbums,
+  startMediaChangeListener: OriginalMediaStore.startMediaChangeListener,
+  stopMediaChangeListener: OriginalMediaStore.stopMediaChangeListener,
+  addListener: OriginalMediaStore.addListener,
+  removeAllListeners: OriginalMediaStore.removeAllListeners,
+} as MediaStorePlugin;
+
+export default DebugMediaStore;

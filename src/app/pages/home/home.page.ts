@@ -44,6 +44,7 @@ export class HomePage implements OnInit, OnDestroy {
   ) {}
 
   async ngOnInit() {
+    console.log('🔵 HomePage: ngOnInit called');
     await this.initializeGallery();
   }
 
@@ -68,26 +69,40 @@ export class HomePage implements OnInit, OnDestroy {
   }
 
   async initializeGallery() {
+    console.log('🔵 HomePage: initializeGallery - START');
     await this.photoService.whenReady();
+    console.log('🔵 HomePage: PhotoService ready');
+    
     this.loadLegacyPhotos();
+    console.log('🔵 HomePage: Legacy photos loaded:', this.photos.length);
 
     const hasScanned = await this.mediaService.hasCompletedInitialScan();
+    console.log('🔵 HomePage: hasCompletedInitialScan:', hasScanned);
+    
     this.hasPermission = await this.mediaService.checkPermissions();
+    console.log('🔵 HomePage: checkPermissions result:', this.hasPermission);
 
     if (!this.hasPermission) {
+      console.log('🟡 HomePage: No permission, calling scanDeviceMedia with showMessage=false, forceRefresh=false');
       await this.scanDeviceMedia(false, false);
       return;
     }
 
+    console.log('🟢 HomePage: Has permission, calling scanDeviceMedia with showMessage=false, forceRefresh=' + !hasScanned);
     await this.scanDeviceMedia(false, !hasScanned);
   }
 
   async scanDeviceMedia(showPermissionMessage = true, forceRefresh = true) {
+    console.log('🔵 HomePage: scanDeviceMedia - START', { showPermissionMessage, forceRefresh });
+    console.log('🔵 HomePage: About to call mediaService.requestPermissions()');
+    
     const granted = await this.mediaService.requestPermissions();
+    
+    console.log('🔵 HomePage: mediaService.requestPermissions() returned:', granted);
     
     if (!granted) {
       this.hasPermission = false;
-      this.loadLegacyPhotos();
+      console.log('🔴 HomePage: Permission NOT granted');
       if (showPermissionMessage) {
         const alert = await this.alertController.create({
           header: 'Permission Required',
@@ -99,6 +114,7 @@ export class HomePage implements OnInit, OnDestroy {
       return;
     }
 
+    console.log('🟢 HomePage: Permission granted! Setting hasPermission = true');
     this.hasPermission = true;
 
     // Show loading
@@ -107,22 +123,27 @@ export class HomePage implements OnInit, OnDestroy {
       spinner: 'circles'
     });
     await loading.present();
+    console.log('🔵 HomePage: Loading dialog shown');
 
     try {
+      console.log('🔵 HomePage: Starting media scan...');
       await this.mediaService.scanAllMedia({
         forceRefresh,
         progressCallback: (loaded) => {
+          console.log('🔵 HomePage: Scan progress:', loaded, 'files');
           loading.message = `Found ${loaded} media files...`;
         }
       });
 
       await loading.dismiss();
+      console.log('🟢 HomePage: Media scan completed successfully');
 
       // Load the media
       await this.loadMediaFromStore();
+      console.log('🟢 HomePage: Media loaded to display');
     } catch (error) {
       await loading.dismiss();
-      console.error('Error scanning media:', error);
+      console.error('🔴 HomePage: Error scanning media:', error);
       
       const errorAlert = await this.alertController.create({
         header: 'Scan Failed',

@@ -46,12 +46,15 @@ export class MediaService {
    * Check if permissions are granted
    */
   async checkPermissions(): Promise<boolean> {
+    console.log('🔵 MediaService: checkPermissions - START');
     try {
       const result = await MediaStore.checkPermissions();
+      console.log('🔵 MediaService: MediaStore.checkPermissions() result:', JSON.stringify(result));
       this.hasPermission = result.granted;
+      console.log('🔵 MediaService: hasPermission set to:', this.hasPermission);
       return result.granted;
     } catch (error) {
-      console.error('Error checking permissions:', error);
+      console.error('🔴 MediaService: Error checking permissions:', error);
       return false;
     }
   }
@@ -60,29 +63,40 @@ export class MediaService {
    * Request media permissions
    */
   async requestPermissions(): Promise<boolean> {
+    console.log('🔵 MediaService: requestPermissions - START');
     try {
-      let result = await MediaStore.checkPermissions();
+      const currentResult = await MediaStore.checkPermissions();
+      console.log('🔵 MediaService: Current permission status:', JSON.stringify(currentResult));
 
-      if (this.hasMissingMediaPermission(result)) {
-        result = await MediaStore.requestPermissions();
+      if (!currentResult.granted) {
+        console.log('🟡 MediaService: Permission not granted, requesting...');
+        console.log('🔵 MediaService: Calling MediaStore.requestPermissions()');
+        
+        const result = await MediaStore.requestPermissions();
+        
+        console.log('🔵 MediaService: MediaStore.requestPermissions() returned:', JSON.stringify(result));
+        
+        this.hasPermission = result.granted;
+        
+        if (result.granted) {
+          console.log('🟢 MediaService: Permission GRANTED, saving to preferences');
+          await Preferences.set({
+            key: this.PERMISSION_KEY,
+            value: 'true'
+          });
+        } else {
+          console.log('🔴 MediaService: Permission DENIED');
+        }
+        
+        return result.granted;
       }
 
-      if (result.images === true && result.video === false) {
-        result = await MediaStore.requestPermissions();
-      }
-
-      this.hasPermission = result.granted;
-      
-      if (result.granted) {
-        await Preferences.set({
-          key: this.PERMISSION_KEY,
-          value: 'true'
-        });
-      }
-      
-      return result.granted;
+      console.log('🟢 MediaService: Permission already granted');
+      this.hasPermission = true;
+      return true;
     } catch (error) {
-      console.error('Error requesting permissions:', error);
+      console.error('🔴 MediaService: Error requesting permissions:', error);
+      console.error('🔴 MediaService: Error details:', JSON.stringify(error));
       return false;
     }
   }
@@ -93,11 +107,7 @@ export class MediaService {
     video?: boolean;
     storage?: boolean;
   }): boolean {
-    if (result.images !== undefined || result.video !== undefined) {
-      return result.images !== true || result.video !== true;
-    }
-
-    return result.storage !== true;
+    return !result.granted;
   }
 
   /**

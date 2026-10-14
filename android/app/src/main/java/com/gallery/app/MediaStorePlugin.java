@@ -2,20 +2,17 @@ package com.gallery.app;
 
 import android.Manifest;
 import android.content.ContentResolver;
-import android.content.ContentUris;
-import android.content.pm.PackageManager;
-import android.database.ContentObserver;
 import android.database.Cursor;
+import android.database.ContentObserver;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
-import android.util.Log;
+import android.util.Base64;
 import android.util.Size;
-
-import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -23,401 +20,237 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
-import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import com.getcapacitor.annotation.Permission;
 
 import java.io.ByteArrayOutputStream;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
-import java.util.List;
+import java.io.InputStream;
+import java.util.HashMap;
 import java.util.Map;
 
 @CapacitorPlugin(
     name = "MediaStore",
     permissions = {
         @Permission(strings = { Manifest.permission.READ_EXTERNAL_STORAGE }, alias = "storage"),
-        @Permission(strings = { Manifest.permission.READ_MEDIA_IMAGES }, alias = "images"),
-        @Permission(strings = { Manifest.permission.READ_MEDIA_VIDEO }, alias = "video")
+        @Permission(strings = { Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO }, alias = "media")
     }
 )
 public class MediaStorePlugin extends Plugin {
-    private static final String TAG = "MediaStorePlugin";
-    private MediaContentObserver mediaObserver;
+    private ContentObserver mediaObserver;
+    private static final String[] COMMON_PROJECTION = {
+        MediaStore.MediaColumns._ID,
+        MediaStore.MediaColumns.DISPLAY_NAME,
+        MediaStore.MediaColumns.DATE_ADDED,
+        MediaStore.MediaColumns.SIZE,
+        MediaStore.MediaColumns.MIME_TYPE,
+        MediaStore.MediaColumns.WIDTH,
+        MediaStore.MediaColumns.HEIGHT,
+        MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
+        MediaStore.MediaColumns.BUCKET_ID
+    };
 
     @PluginMethod
     public void checkPermissions(PluginCall call) {
-        call.resolve(buildPermissionResult());
-    }
-
-    private JSObject buildPermissionResult() {
-        JSObject result = new JSObject();
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            boolean hasImages = hasMediaPermission(Manifest.permission.READ_MEDIA_IMAGES);
-            boolean hasVideo = hasMediaPermission(Manifest.permission.READ_MEDIA_VIDEO);
-
-            result.put("granted", hasImages || hasVideo);
-            result.put("images", hasImages);
-            result.put("video", hasVideo);
-            result.put("storage", false);
-        } else {
-            boolean hasStorage = hasMediaPermission(Manifest.permission.READ_EXTERNAL_STORAGE);
-            result.put("granted", hasStorage);
-            result.put("images", hasStorage);
-            result.put("video", hasStorage);
-            result.put("storage", hasStorage);
-        }
-
-        return result;
-    }
-
-    private boolean hasMediaPermission(String permission) {
-        return ContextCompat.checkSelfPermission(getContext(), permission) == PackageManager.PERMISSION_GRANTED;
+        JSObject result = permissionResult();
+        call.resolve(result);
     }
 
     @PluginMethod
     public void requestPermissions(PluginCall call) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (!hasMediaPermission(Manifest.permission.READ_MEDIA_IMAGES)) {
-                requestPermissionForAlias("images", call, "permissionsCallback");
-                return;
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (getPermissionState("media") != com.getcapacitor.PermissionState.GRANTED) {
+                requestPermissionForAlias("media", call, "permissionsCallback");
+            } else {
+                call.resolve(permissionResult());
             }
-
-            if (!hasMediaPermission(Manifest.permission.READ_MEDIA_VIDEO)) {
-                requestPermissionForAlias("video", call, "permissionsCallback");
-                return;
-            }
-
-            call.resolve(buildPermissionResult());
-            return;
-        }
-
-        if (!hasMediaPermission(Manifest.permission.READ_EXTERNAL_STORAGE)) {
+        } else if (getPermissionState("storage") != com.getcapacitor.PermissionState.GRANTED) {
             requestPermissionForAlias("storage", call, "permissionsCallback");
-            return;
+        } else {
+            call.resolve(permissionResult());
         }
-
-        call.resolve(buildPermissionResult());
     }
 
     @PermissionCallback
     private void permissionsCallback(PluginCall call) {
-        checkPermissions(call);
+        call.resolve(permissionResult());
+    }
+
+    private JSObject permissionResult() {
+        boolean images;
+        boolean video;
+        boolean storage;
+        if (Build.VERSION.SDK_INT >= 33) {
+            images = getPermissionState("media") == com.getcapacitor.PermissionState.GRANTED
+                && getContext().checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            video = getPermissionState("media") == com.getcapacitor.PermissionState.GRANTED
+                && getContext().checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            storage = images && video;
+        } else {
+            storage = getPermissionState("storage") == com.getcapacitor.PermissionState.GRANTED;
+            images = storage;
+            video = storage;
+        }
+        JSObject result = new JSObject();
+        result.put("granted", images && video);
+        result.put("images", images);
+        result.put("video", video);
+        result.put("storage", storage);
+        return result;
     }
 
     @PluginMethod
     public void scanMedia(PluginCall call) {
-        if (!hasRequiredPermissions()) {
-            call.reject("Permission denied");
+        if (!permissionResult().optBoolean("granted")) {
+            call.reject("Media permission has not been granted");
             return;
         }
-
         int limit = Math.max(1, call.getInt("limit", 100));
         int offset = Math.max(0, call.getInt("offset", 0));
-        String mediaType = call.getString("mediaType", "all");
-
+        String type = call.getString("mediaType", "all");
+        JSArray media = new JSArray();
         try {
-            List<JSObject> combined = new ArrayList<>();
-
-            if (!"video".equalsIgnoreCase(mediaType)) {
-                combined.addAll(scanMediaType("image", limit, offset));
-            }
-
-            if (!"image".equalsIgnoreCase(mediaType)) {
-                combined.addAll(scanMediaType("video", limit, offset));
-            }
-
-            combined.sort((left, right) -> Long.compare(getDateTakenValue(right), getDateTakenValue(left)));
-
-            int start = Math.max(0, offset);
-            int end = Math.min(combined.size(), start + limit);
-            List<JSObject> page = start < combined.size() ? new ArrayList<>(combined.subList(start, end)) : new ArrayList<>();
-
-            JSArray mediaList = new JSArray();
-            for (JSObject item : page) {
-                mediaList.put(item);
-            }
-
+            ContentResolver resolver = getContext().getContentResolver();
+            queryMedia(resolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image", type, limit, offset, media);
+            queryMedia(resolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "video", type, limit, offset, media);
             JSObject result = new JSObject();
-            result.put("media", mediaList);
-            result.put("count", page.size());
+            result.put("media", media);
+            result.put("count", media.length());
             call.resolve(result);
         } catch (Exception e) {
-            Log.e(TAG, "Error scanning media", e);
-            call.reject("Error scanning media: " + e.getMessage());
+            call.reject("Unable to scan device media", e);
         }
     }
 
-    private List<JSObject> scanMediaType(String mediaType, int limit, int offset) {
-        Uri uri = "image".equalsIgnoreCase(mediaType)
-            ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-            : MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
-
-        String[] projection = "image".equalsIgnoreCase(mediaType)
+    private void queryMedia(ContentResolver resolver, Uri collection, String kind, String requestedType,
+                            int limit, int offset, JSArray output) {
+        if (!"all".equals(requestedType) && !kind.equals(requestedType)) return;
+        String sort = MediaStore.MediaColumns.DATE_ADDED + " DESC";
+        String[] projection = "video".equals(kind)
             ? new String[] {
-                MediaStore.Images.Media._ID,
-                MediaStore.Images.Media.DISPLAY_NAME,
-                MediaStore.Images.Media.DATE_TAKEN,
-                MediaStore.Images.Media.DATE_MODIFIED,
-                MediaStore.Images.Media.DATE_ADDED,
-                MediaStore.Images.Media.SIZE,
-                MediaStore.Images.Media.BUCKET_ID,
-                MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
-                MediaStore.Images.Media.WIDTH,
-                MediaStore.Images.Media.HEIGHT
+                MediaStore.MediaColumns._ID,
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.DATE_ADDED,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.MIME_TYPE,
+                MediaStore.MediaColumns.WIDTH,
+                MediaStore.MediaColumns.HEIGHT,
+                MediaStore.MediaColumns.DURATION,
+                MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
+                MediaStore.MediaColumns.BUCKET_ID
             }
-            : new String[] {
-                MediaStore.Video.Media._ID,
-                MediaStore.Video.Media.DISPLAY_NAME,
-                MediaStore.Video.Media.DATE_TAKEN,
-                MediaStore.Video.Media.DATE_MODIFIED,
-                MediaStore.Video.Media.DATE_ADDED,
-                MediaStore.Video.Media.SIZE,
-                MediaStore.Video.Media.BUCKET_ID,
-                MediaStore.Video.Media.BUCKET_DISPLAY_NAME,
-                MediaStore.Video.Media.DURATION,
-                MediaStore.Video.Media.WIDTH,
-                MediaStore.Video.Media.HEIGHT
-            };
-
-        String sortOrder = "DATE_TAKEN DESC, DATE_MODIFIED DESC, DATE_ADDED DESC, _ID DESC";
-        List<JSObject> items = new ArrayList<>();
-
-        try (Cursor cursor = getContext().getContentResolver().query(uri, projection, null, null, sortOrder)) {
-            if (cursor == null) {
-                return items;
-            }
-
-            int idIndex = cursor.getColumnIndexOrThrow("_id");
-            int nameIndex = cursor.getColumnIndexOrThrow("_display_name");
-            int dateTakenIndex = cursor.getColumnIndexOrThrow("date_taken");
-            int dateModifiedIndex = cursor.getColumnIndexOrThrow("date_modified");
-            int dateAddedIndex = cursor.getColumnIndexOrThrow("date_added");
-            int sizeIndex = cursor.getColumnIndexOrThrow("_size");
-            int bucketIdIndex = cursor.getColumnIndexOrThrow("bucket_id");
-            int bucketNameIndex = cursor.getColumnIndexOrThrow("bucket_display_name");
-            int widthIndex = cursor.getColumnIndexOrThrow("width");
-            int heightIndex = cursor.getColumnIndexOrThrow("height");
-            int durationIndex = "video".equalsIgnoreCase(mediaType) ? cursor.getColumnIndexOrThrow("duration") : -1;
-
+            : COMMON_PROJECTION;
+        try (Cursor cursor = resolver.query(collection, projection, null, null, sort)) {
+            if (cursor == null) return;
+            int idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID);
+            int nameCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME);
+            int dateCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED);
+            int sizeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE);
+            int widthCol = cursor.getColumnIndex(MediaStore.MediaColumns.WIDTH);
+            int heightCol = cursor.getColumnIndex(MediaStore.MediaColumns.HEIGHT);
+            int durationCol = cursor.getColumnIndex(MediaStore.MediaColumns.DURATION);
+            int bucketCol = cursor.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME);
+            int bucketIdCol = cursor.getColumnIndex(MediaStore.MediaColumns.BUCKET_ID);
+            int skipped = 0;
+            int added = 0;
             while (cursor.moveToNext()) {
-                long id = cursor.getLong(idIndex);
-                String name = cursor.getString(nameIndex);
-                long dateTaken = cursor.getLong(dateTakenIndex);
-                if (dateTaken <= 0L) {
-                    long dateModified = cursor.getLong(dateModifiedIndex);
-                    if (dateModified > 0L) {
-                        dateTaken = dateModified * 1000L;
-                    }
+                if (skipped < offset) {
+                    skipped++;
+                    continue;
                 }
-                if (dateTaken <= 0L) {
-                    long dateAdded = cursor.getLong(dateAddedIndex);
-                    if (dateAdded > 0L) {
-                        dateTaken = dateAdded * 1000L;
-                    }
-                }
-                if (dateTaken <= 0L) {
-                    dateTaken = System.currentTimeMillis();
-                }
-
-                String bucketId = cursor.getString(bucketIdIndex);
-                String bucketName = cursor.getString(bucketNameIndex);
-                long size = cursor.getLong(sizeIndex);
-                int width = cursor.getInt(widthIndex);
-                int height = cursor.getInt(heightIndex);
-                long duration = durationIndex >= 0 ? cursor.getLong(durationIndex) : 0L;
-
-                Uri contentUri = ContentUris.withAppendedId(uri, id);
-                JSObject media = new JSObject();
-                media.put("id", String.valueOf(id));
-                media.put("key", mediaType + ":" + id);
-                media.put("name", name != null ? name : "Unknown");
-                media.put("dateTaken", dateTaken);
-                media.put("size", size);
-                media.put("uri", contentUri.toString());
-                media.put("path", contentUri.toString());
-                media.put("type", mediaType);
-                media.put("bucket", bucketName != null ? bucketName : "Unknown");
-                media.put("bucketId", bucketId != null ? bucketId : "unknown");
-                media.put("width", width);
-                media.put("height", height);
-
-                if ("video".equalsIgnoreCase(mediaType)) {
-                    media.put("duration", duration);
-                }
-
-                items.add(media);
+                if (added >= limit) break;
+                long id = cursor.getLong(idCol);
+                Uri itemUri = Uri.withAppendedPath(collection, Long.toString(id));
+                JSObject item = new JSObject();
+                item.put("id", Long.toString(id));
+                item.put("key", kind + ":" + id);
+                item.put("name", cursor.getString(nameCol));
+                item.put("dateTaken", cursor.getLong(dateCol) * 1000L);
+                item.put("size", cursor.getLong(sizeCol));
+                item.put("uri", itemUri.toString());
+                item.put("path", itemUri.toString());
+                item.put("type", kind);
+                item.put("bucket", bucketCol >= 0 ? cursor.getString(bucketCol) : "");
+                if (bucketIdCol >= 0) item.put("bucketId", cursor.getString(bucketIdCol));
+                item.put("width", widthCol >= 0 ? cursor.getInt(widthCol) : 0);
+                item.put("height", heightCol >= 0 ? cursor.getInt(heightCol) : 0);
+                if ("video".equals(kind) && durationCol >= 0) item.put("duration", cursor.getLong(durationCol));
+                output.put(item);
+                added++;
             }
-        } catch (Exception e) {
-            Log.e(TAG, "Error scanning " + mediaType + " media", e);
         }
-
-        items.sort((left, right) -> Long.compare(getDateTakenValue(right), getDateTakenValue(left)));
-        int start = Math.max(0, offset);
-        int end = Math.min(items.size(), start + limit);
-        if (start >= items.size()) {
-            return new ArrayList<>();
-        }
-        return new ArrayList<>(items.subList(start, end));
     }
 
     @PluginMethod
     public void getThumbnail(PluginCall call) {
-        if (!hasRequiredPermissions()) {
-            call.reject("Permission denied");
-            return;
-        }
-
-        String mediaId = call.getString("id");
-        String mediaType = call.getString("type", "image");
-
-        if (mediaId == null || mediaId.trim().isEmpty()) {
-            call.reject("Media ID is required");
-            return;
-        }
-
+        String id = call.getString("id");
+        String type = call.getString("type", "image");
+        if (id == null) { call.reject("Media id is required"); return; }
         try {
-            long id = Long.parseLong(mediaId);
-            Bitmap thumbnail = null;
-            Uri contentUri = "video".equalsIgnoreCase(mediaType)
-                ? ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
-                : ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                thumbnail = getContext().getContentResolver().loadThumbnail(contentUri, new Size(180, 180), null);
-            } else if ("video".equalsIgnoreCase(mediaType)) {
-                thumbnail = MediaStore.Video.Thumbnails.getThumbnail(
-                    getContext().getContentResolver(),
-                    id,
-                    MediaStore.Video.Thumbnails.MINI_KIND,
-                    null
-                );
+            Uri base = "video".equals(type) ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+            Uri uri = Uri.withAppendedPath(base, id);
+            Bitmap bitmap;
+            if (Build.VERSION.SDK_INT >= 29) {
+                bitmap = getContext().getContentResolver().loadThumbnail(uri, new Size(512, 512), null);
             } else {
-                thumbnail = MediaStore.Images.Thumbnails.getThumbnail(
-                    getContext().getContentResolver(),
-                    id,
-                    MediaStore.Images.Thumbnails.MINI_KIND,
-                    null
-                );
+                try (InputStream in = getContext().getContentResolver().openInputStream(uri)) { bitmap = BitmapFactory.decodeStream(in); }
             }
-
-            if (thumbnail == null) {
-                call.reject("Failed to generate thumbnail");
-                return;
-            }
-
-            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-            thumbnail.compress(Bitmap.CompressFormat.JPEG, 80, outputStream);
-            byte[] thumbnailBytes = outputStream.toByteArray();
-            String base64Thumbnail = Base64.getEncoder().encodeToString(thumbnailBytes);
-
+            if (bitmap == null) throw new IllegalStateException("Thumbnail unavailable");
+            ByteArrayOutputStream stream = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 82, stream);
             JSObject result = new JSObject();
-            result.put("thumbnail", "data:image/jpeg;base64," + base64Thumbnail);
+            result.put("thumbnail", "data:image/jpeg;base64," + Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP));
             call.resolve(result);
-        } catch (Exception e) {
-            Log.e(TAG, "Error getting thumbnail", e);
-            call.reject("Error getting thumbnail: " + e.getMessage());
-        }
+        } catch (Exception e) { call.reject("Unable to load media thumbnail", e); }
     }
 
     @PluginMethod
     public void getAlbums(PluginCall call) {
-        if (!hasRequiredPermissions()) {
-            call.reject("Permission denied");
-            return;
+        if (!permissionResult().optBoolean("granted")) { call.resolve(new JSObject().put("albums", new JSArray())); return; }
+        Map<String, Integer> counts = new HashMap<>();
+        Map<String, String> ids = new HashMap<>();
+        ContentResolver resolver = getContext().getContentResolver();
+        collectAlbums(resolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, counts, ids);
+        collectAlbums(resolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI, counts, ids);
+        JSArray albums = new JSArray();
+        for (String name : counts.keySet()) {
+            JSObject album = new JSObject();
+            album.put("id", ids.get(name)); album.put("name", name); album.put("count", counts.get(name)); album.put("type", "auto");
+            albums.put(album);
         }
-
-        try {
-            Map<String, JSObject> albumMap = new LinkedHashMap<>();
-            addBucketSummaries(albumMap, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image");
-            addBucketSummaries(albumMap, MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "video");
-
-            JSArray albums = new JSArray();
-            for (JSObject album : albumMap.values()) {
-                albums.put(album);
-            }
-
-            JSObject result = new JSObject();
-            result.put("albums", albums);
-            call.resolve(result);
-        } catch (Exception e) {
-            Log.e(TAG, "Error getting albums", e);
-            call.reject("Error getting albums: " + e.getMessage());
-        }
+        call.resolve(new JSObject().put("albums", albums));
     }
 
-    private long getDateTakenValue(JSObject item) {
-        try {
-            if (item.has("dateTaken")) {
-                return item.getLong("dateTaken");
-            }
-        } catch (Exception ignored) {
-            // Ignore malformed cache entries during sort.
-        }
-        return 0L;
-    }
-
-    private void addBucketSummaries(Map<String, JSObject> albumMap, Uri uri, String mediaType) {
-        String[] projection = new String[] {
-            "bucket_id",
-            "bucket_display_name"
-        };
-
-        try (Cursor cursor = getContext().getContentResolver().query(uri, projection, null, null, "bucket_display_name ASC")) {
-            if (cursor == null) {
-                return;
-            }
-
-            int bucketIdIndex = cursor.getColumnIndexOrThrow("bucket_id");
-            int bucketNameIndex = cursor.getColumnIndexOrThrow("bucket_display_name");
-
+    private void collectAlbums(ContentResolver resolver, Uri collection, Map<String, Integer> counts, Map<String, String> ids) {
+        String[] columns = { MediaStore.MediaColumns.BUCKET_DISPLAY_NAME, MediaStore.MediaColumns.BUCKET_ID };
+        try (Cursor cursor = resolver.query(collection, columns, null, null, null)) {
+            if (cursor == null) return;
             while (cursor.moveToNext()) {
-                String bucketId = cursor.getString(bucketIdIndex);
-                String bucketName = cursor.getString(bucketNameIndex);
-
-                if (bucketId == null || bucketId.trim().isEmpty()) {
-                    continue;
-                }
-
-                JSObject album = albumMap.get(bucketId);
-                if (album == null) {
-                    album = new JSObject();
-                    album.put("id", bucketId);
-                    album.put("name", bucketName != null ? bucketName : "Unknown");
-                    album.put("count", 0);
-                    album.put("type", "auto");
-                    albumMap.put(bucketId, album);
-                }
-
-                int currentCount = album.has("count") ? album.getInt("count") : 0;
-                album.put("count", currentCount + 1);
+                String name = cursor.getString(0);
+                String id = cursor.getString(1);
+                if (name == null) name = "Unknown";
+                counts.put(name, counts.containsKey(name) ? counts.get(name) + 1 : 1);
+                ids.put(name, id == null ? name : id);
             }
-        } catch (Exception e) {
-            Log.e(TAG, "Error getting albums for " + mediaType, e);
         }
     }
 
     @PluginMethod
     public void startMediaChangeListener(PluginCall call) {
         if (mediaObserver == null) {
-            mediaObserver = new MediaContentObserver(new Handler(Looper.getMainLooper()));
-            getContext().getContentResolver().registerContentObserver(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                true,
-                mediaObserver
-            );
-            getContext().getContentResolver().registerContentObserver(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                true,
-                mediaObserver
-            );
+            mediaObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
+                @Override
+                public void onChange(boolean selfChange, Uri uri) {
+                    JSObject event = new JSObject();
+                    event.put("event", "changed");
+                    event.put("timestamp", System.currentTimeMillis());
+                    notifyListeners("mediaChanged", event);
+                }
+            };
+            ContentResolver resolver = getContext().getContentResolver();
+            resolver.registerContentObserver(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, mediaObserver);
+            resolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, mediaObserver);
         }
-
-        JSObject result = new JSObject();
-        result.put("listening", true);
-        call.resolve(result);
+        call.resolve(new JSObject().put("listening", true));
     }
 
     @PluginMethod
@@ -426,43 +259,15 @@ public class MediaStorePlugin extends Plugin {
             getContext().getContentResolver().unregisterContentObserver(mediaObserver);
             mediaObserver = null;
         }
-
-        JSObject result = new JSObject();
-        result.put("listening", false);
-        call.resolve(result);
+        call.resolve(new JSObject().put("listening", false));
     }
 
-    public boolean hasRequiredPermissions() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            return hasMediaPermission(Manifest.permission.READ_MEDIA_IMAGES)
-                || hasMediaPermission(Manifest.permission.READ_MEDIA_VIDEO);
+    @Override
+    protected void handleOnDestroy() {
+        if (mediaObserver != null && getContext() != null) {
+            getContext().getContentResolver().unregisterContentObserver(mediaObserver);
+            mediaObserver = null;
         }
-
-        return hasMediaPermission(Manifest.permission.READ_EXTERNAL_STORAGE);
-    }
-
-    private class MediaContentObserver extends ContentObserver {
-        public MediaContentObserver(Handler handler) {
-            super(handler);
-        }
-
-        @Override
-        public void onChange(boolean selfChange) {
-            super.onChange(selfChange);
-            notifyMediaChanged();
-        }
-
-        @Override
-        public void onChange(boolean selfChange, Uri uri) {
-            super.onChange(selfChange, uri);
-            notifyMediaChanged();
-        }
-
-        private void notifyMediaChanged() {
-            JSObject data = new JSObject();
-            data.put("event", "mediaChanged");
-            data.put("timestamp", System.currentTimeMillis());
-            notifyListeners("mediaChanged", data);
-        }
+        super.handleOnDestroy();
     }
 }
