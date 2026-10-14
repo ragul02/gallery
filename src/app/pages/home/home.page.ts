@@ -34,6 +34,10 @@ export class HomePage implements OnInit, OnDestroy {
   // Thumbnail loading queue
   private thumbnailQueue: MediaItemView[] = [];
   private loadingThumbnails = false;
+  private longPressTimer?: ReturnType<typeof setTimeout>;
+  private suppressNextMediaClick = false;
+  selectionMode = false;
+  selectedMediaKeys = new Set<string>();
 
   constructor(
     public photoService: PhotoService,
@@ -288,6 +292,73 @@ export class HomePage implements OnInit, OnDestroy {
     });
   }
 
+  private mediaKey(media: MediaItemView): string {
+    return `${media.type}:${media.id}`;
+  }
+
+  startMediaLongPress(media: MediaItemView) {
+    this.cancelMediaLongPress();
+    this.longPressTimer = setTimeout(() => {
+      this.selectionMode = true;
+      this.selectedMediaKeys.add(this.mediaKey(media));
+      this.suppressNextMediaClick = true;
+    }, 480);
+  }
+
+  cancelMediaLongPress() {
+    if (this.longPressTimer) {
+      clearTimeout(this.longPressTimer);
+      this.longPressTimer = undefined;
+    }
+  }
+
+  onMediaCardClick(media: MediaItemView) {
+    if (this.suppressNextMediaClick) {
+      this.suppressNextMediaClick = false;
+      return;
+    }
+    if (this.selectionMode) {
+      const key = this.mediaKey(media);
+      this.selectedMediaKeys.has(key) ? this.selectedMediaKeys.delete(key) : this.selectedMediaKeys.add(key);
+      if (this.selectedMediaKeys.size === 0) this.selectionMode = false;
+      return;
+    }
+    void this.openMediaViewer(media);
+  }
+
+  onMediaContextMenu(event: MouseEvent, media: MediaItemView) {
+    event.preventDefault();
+    this.selectionMode = true;
+    this.selectedMediaKeys.add(this.mediaKey(media));
+  }
+
+  cancelSelection() {
+    this.cancelMediaLongPress();
+    this.selectionMode = false;
+    this.selectedMediaKeys.clear();
+  }
+
+  async deleteSelectedMedia() {
+    const selected = this.mediaItems.filter(item => this.selectedMediaKeys.has(this.mediaKey(item)));
+    if (selected.length === 0) return;
+
+    try {
+      const deleted = await this.mediaService.deleteMedia(selected);
+      if (deleted) {
+        this.cancelSelection();
+        await this.refreshMedia();
+      }
+    } catch (error) {
+      console.error('Unable to delete selected media:', error);
+      const alert = await this.alertController.create({
+        header: 'Could not delete media',
+        message: 'Android could not delete the selected item(s). Try again or check the app’s media access.',
+        buttons: ['OK']
+      });
+      await alert.present();
+    }
+  }
+
   async addPhotoToGallery() {
     const actionSheet = await this.actionSheetController.create({
       header: 'Add Photo',
@@ -327,32 +398,8 @@ export class HomePage implements OnInit, OnDestroy {
 
   async showSortOptions() {
     const actionSheet = await this.actionSheetController.create({
-      header: 'Sort & Filter',
+      header: 'Sort media',
       buttons: [
-        {
-          text: 'All Media',
-          icon: this.currentFilter === MediaFilterType.ALL ? 'checkmark' : 'image',
-          handler: () => {
-            this.currentFilter = MediaFilterType.ALL;
-            this.refreshMedia();
-          }
-        },
-        {
-          text: 'Images Only',
-          icon: this.currentFilter === MediaFilterType.IMAGES ? 'checkmark' : 'images',
-          handler: () => {
-            this.currentFilter = MediaFilterType.IMAGES;
-            this.refreshMedia();
-          }
-        },
-        {
-          text: 'Videos Only',
-          icon: this.currentFilter === MediaFilterType.VIDEOS ? 'checkmark' : 'videocam',
-          handler: () => {
-            this.currentFilter = MediaFilterType.VIDEOS;
-            this.refreshMedia();
-          }
-        },
         {
           text: 'Date (Newest First)',
           icon: this.currentSort === MediaSortType.DATE_DESC ? 'checkmark' : 'calendar',

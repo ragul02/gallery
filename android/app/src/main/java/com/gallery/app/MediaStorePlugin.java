@@ -1,10 +1,13 @@
 package com.gallery.app;
 
 import android.Manifest;
+import android.app.Activity;
+import android.app.PendingIntent;
 import android.content.ContentResolver;
 import android.database.Cursor;
 import android.database.ContentObserver;
 import android.graphics.Bitmap;
+import android.content.IntentSender;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
@@ -12,6 +15,11 @@ import android.os.Looper;
 import android.provider.MediaStore;
 import android.util.Base64;
 import android.util.Size;
+
+import androidx.activity.result.ActivityResult;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.IntentSenderRequest;
+import androidx.activity.result.contract.ActivityResultContracts;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -24,17 +32,24 @@ import com.getcapacitor.annotation.Permission;
 
 import java.io.ByteArrayOutputStream;
 import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import org.json.JSONObject;
 
 @CapacitorPlugin(
     name = "MediaStore",
     permissions = {
         @Permission(strings = { Manifest.permission.READ_EXTERNAL_STORAGE }, alias = "storage"),
-        @Permission(strings = { Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO }, alias = "media")
+        @Permission(strings = { Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO }, alias = "media"),
+        @Permission(strings = { Manifest.permission.WRITE_EXTERNAL_STORAGE }, alias = "write")
     }
 )
 public class MediaStorePlugin extends Plugin {
     private ContentObserver mediaObserver;
+    private ActivityResultLauncher<IntentSenderRequest> deleteRequestLauncher;
+    private PluginCall pendingDeleteCall;
+    private List<Uri> pendingDeleteUris = new ArrayList<>();
     private static final String[] COMMON_PROJECTION = {
         MediaStore.MediaColumns._ID,
         MediaStore.MediaColumns.DISPLAY_NAME,
@@ -46,6 +61,116 @@ public class MediaStorePlugin extends Plugin {
         MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
         MediaStore.MediaColumns.BUCKET_ID
     };
+
+    @Override
+    public void load() {
+        deleteRequestLauncher = getBridge().registerForActivityResult(
+            new ActivityResultContracts.StartIntentSenderForResult(),
+            this::onDeleteRequestResult
+        );
+    }
+
+    @PluginMethod
+    public void deleteMedia(PluginCall call) {
+        JSArray items = call.getArray("items");
+        if (items == null || items.length() == 0) {
+            call.resolve(new JSObject().put("deleted", true));
+            return;
+        }
+        List<Uri> uris = new ArrayList<>();
+        try {
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject item = items.getJSONObject(i);
+                String id = item.getString("id");
+                String type = item.getString("type");
+                Uri collection = "video".equals(type)
+                    ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                    : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+                uris.add(Uri.withAppendedPath(collection, id));
+            }
+        } catch (Exception e) {
+            call.reject("Invalid media selection", e);
+            return;
+        }
+
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                PendingIntent request = MediaStore.createDeleteRequest(getContext().getContentResolver(), uris);
+                launchDeleteConfirmation(call, uris, request.getIntentSender());
+            } catch (Exception e) {
+                call.reject("Unable to request media deletion", e);
+            }
+        } else if (Build.VERSION.SDK_INT == 29) {
+            deleteForAndroidTen(call, uris);
+        } else if (getPermissionState("write") != com.getcapacitor.PermissionState.GRANTED) {
+            pendingDeleteUris = uris;
+            requestPermissionForAlias("write", call, "legacyDeletePermissionCallback");
+        } else {
+            deleteUris(call, uris);
+        }
+    }
+
+    @PermissionCallback
+    private void legacyDeletePermissionCallback(PluginCall call) {
+        if (getPermissionState("write") != com.getcapacitor.PermissionState.GRANTED) {
+            call.resolve(new JSObject().put("deleted", false));
+            pendingDeleteUris.clear();
+            return;
+        }
+        deleteUris(call, pendingDeleteUris);
+        pendingDeleteUris.clear();
+    }
+
+    private void deleteForAndroidTen(PluginCall call, List<Uri> uris) {
+        try {
+            deleteUrisNow(uris);
+            call.resolve(new JSObject().put("deleted", true));
+        } catch (android.app.RecoverableSecurityException e) {
+            launchDeleteConfirmation(call, uris, e.getUserAction().getActionIntent().getIntentSender());
+        } catch (Exception e) {
+            call.reject("Unable to delete selected media", e);
+        }
+    }
+
+    private void launchDeleteConfirmation(PluginCall call, List<Uri> uris, IntentSender sender) {
+        pendingDeleteCall = call;
+        pendingDeleteUris = new ArrayList<>(uris);
+        getBridge().saveCall(call);
+        deleteRequestLauncher.launch(new IntentSenderRequest.Builder(sender).build());
+    }
+
+    private void onDeleteRequestResult(ActivityResult result) {
+        PluginCall call = pendingDeleteCall;
+        pendingDeleteCall = null;
+        if (call == null) return;
+        if (result.getResultCode() != Activity.RESULT_OK) {
+            call.resolve(new JSObject().put("deleted", false));
+            pendingDeleteUris.clear();
+            return;
+        }
+        try {
+            if (Build.VERSION.SDK_INT == 29) deleteUrisNow(pendingDeleteUris);
+            call.resolve(new JSObject().put("deleted", true));
+        } catch (Exception e) {
+            call.reject("Unable to delete selected media", e);
+        } finally {
+            pendingDeleteUris.clear();
+        }
+    }
+
+    private void deleteUris(PluginCall call, List<Uri> uris) {
+        try {
+            deleteUrisNow(uris);
+            call.resolve(new JSObject().put("deleted", true));
+        } catch (Exception e) {
+            call.reject("Unable to delete selected media", e);
+        }
+    }
+
+    private void deleteUrisNow(List<Uri> uris) {
+        ContentResolver resolver = getContext().getContentResolver();
+        for (Uri uri : uris) resolver.delete(uri, null, null);
+    }
 
     @PluginMethod
     public void checkPermissions(PluginCall call) {

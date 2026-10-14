@@ -273,6 +273,20 @@ export class MediaService {
     }
   }
 
+  async deleteMedia(items: Array<Pick<MediaItem, 'id' | 'type'>>): Promise<boolean> {
+    if (items.length === 0) return true;
+    const result = await MediaStore.deleteMedia({
+      items: items.map(({ id, type }) => ({ id, type }))
+    });
+    if (!result.deleted) return false;
+
+    const deletedKeys = new Set(items.map(item => `${item.type}:${item.id}`));
+    this.mediaItems = this.mediaItems.filter(item => !deletedKeys.has(`${item.type}:${item.id}`));
+    items.forEach(item => this.thumbnailCache.delete(item.id));
+    await this.cacheMedia(this.mediaItems);
+    return true;
+  }
+
   /**
    * Get all albums/folders
    */

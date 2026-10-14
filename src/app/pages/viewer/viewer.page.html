@@ -1,93 +1,70 @@
-<ion-content [fullscreen]="true" class="viewer-content" (click)="toggleControls()">
-  <div class="viewer-container" #imageContainer>
-    <!-- App-captured photos are stored in the app's private filesystem. -->
-    <div class="media-wrapper" *ngIf="currentPhoto">
-      <img
-        [src]="currentPhoto.webviewPath"
-        [alt]="currentPhoto.name"
-        class="media-content"
-      />
-    </div>
+<ion-content [fullscreen]="true" class="viewer-content" (click)="onStageClick()">
+  <main class="viewer-stage" (touchstart)="onTouchStart($event)" (touchend)="onTouchEnd($event)">
+    <img
+      *ngIf="currentPhoto"
+      [src]="currentPhoto.webviewPath"
+      [alt]="currentPhoto.name"
+      class="media-content"
+      draggable="false"
+    />
 
-    <!-- Image viewer -->
-    <div class="media-wrapper" *ngIf="currentMedia?.type === 'image'">
-      <img 
-        [src]="thumbnailUrl" 
-        [alt]="currentMedia?.name"
-        class="media-content"
-      />
-    </div>
+    <img
+      *ngIf="currentMedia?.type === 'image'"
+      [src]="mediaSourceUrl"
+      [alt]="currentMedia.name"
+      class="media-content"
+      draggable="false"
+      (error)="onFullImageError()"
+    />
 
-    <!-- Video viewer -->
-    <div class="media-wrapper" *ngIf="currentMedia?.type === 'video'">
-      <video 
-        [src]="currentMedia.uri" 
-        controls
-        class="media-content"
-        (click)="$event.stopPropagation()"
-      ></video>
-    </div>
-  </div>
+    <video
+      *ngIf="currentMedia?.type === 'video'"
+      [src]="mediaSourceUrl"
+      [poster]="thumbnailUrl || null"
+      class="media-content video-content"
+      controls
+      playsinline
+      webkit-playsinline
+      preload="metadata"
+      (click)="$event.stopPropagation()"
+      (error)="onVideoError()"
+    ></video>
 
-  <!-- Controls overlay -->
-  <div class="controls-overlay" *ngIf="showControls">
-    <!-- Header -->
-    <div class="viewer-header">
-      <ion-button fill="clear" (click)="close()">
-        <ion-icon slot="icon-only" name="close"></ion-icon>
-      </ion-button>
-      <div class="media-info">
-        <h3>{{ currentPhoto?.name || currentMedia?.name }}</h3>
-        <p>{{ mediaCounter }}</p>
+    <div class="playback-error" *ngIf="playbackError">
+      <ion-icon name="alert-circle-outline"></ion-icon>
+      <span>This video could not be opened. The file may be unavailable or use an unsupported format.</span>
+    </div>
+  </main>
+
+  <div class="viewer-chrome" [class.controls-hidden]="!showControls">
+    <header class="viewer-topbar">
+      <button class="chrome-button close-button" aria-label="Back to gallery" (click)="close(); $event.stopPropagation()">
+        <ion-icon name="arrow-back"></ion-icon>
+      </button>
+      <div class="topbar-title">
+        <h1>{{ currentPhoto?.name || currentMedia?.name || 'Media' }}</h1>
+      <span>{{ mediaCounter }}</span>
       </div>
-      <div class="spacer"></div>
-    </div>
+      <span class="media-type-badge" *ngIf="currentMedia?.type === 'video'">
+        <ion-icon name="videocam-outline"></ion-icon> VIDEO
+      </span>
+    </header>
 
-    <!-- Navigation buttons -->
-    <div class="navigation-buttons">
-      <ion-button 
-        fill="clear" 
-        (click)="previousMedia(); $event.stopPropagation()" 
-        [disabled]="!canGoPrevious"
-        class="nav-button nav-previous"
-      >
-        <ion-icon slot="icon-only" name="chevron-back"></ion-icon>
-      </ion-button>
-
-      <ion-button 
-        fill="clear" 
-        (click)="nextMedia(); $event.stopPropagation()" 
-        [disabled]="!canGoNext"
-        class="nav-button nav-next"
-      >
-        <ion-icon slot="icon-only" name="chevron-forward"></ion-icon>
-      </ion-button>
-    </div>
-
-    <!-- Footer with media details -->
-    <div class="viewer-footer" *ngIf="currentMedia || currentPhoto">
-      <div class="media-details">
-        <span class="detail-item">
-          <ion-icon name="calendar-outline"></ion-icon>
-          {{ (currentPhoto?.dateTaken || currentMedia?.dateTaken) | date:'medium' }}
-        </span>
-        <span class="detail-item" *ngIf="currentMedia">
-          <ion-icon name="expand-outline"></ion-icon>
-          {{ currentMedia.width }}x{{ currentMedia.height }}
-        </span>
-        <span class="detail-item" *ngIf="currentPhoto?.size">
-          <ion-icon name="document-outline"></ion-icon>
-          {{ (currentPhoto.size / 1024 / 1024).toFixed(2) }} MB
-        </span>
-        <span class="detail-item" *ngIf="currentMedia.size">
-          <ion-icon name="document-outline"></ion-icon>
-          {{ (currentMedia.size / 1024 / 1024).toFixed(2) }} MB
-        </span>
-        <span class="detail-item" *ngIf="currentMedia.type === 'video' && currentMedia.duration">
-          <ion-icon name="time-outline"></ion-icon>
-          {{ (currentMedia.duration / 1000).toFixed(0) }}s
-        </span>
-      </div>
-    </div>
+    <footer class="viewer-bottom">
+      <span class="detail-pill" *ngIf="currentPhoto?.dateTaken || currentMedia?.dateTaken">
+        <ion-icon name="calendar-outline"></ion-icon>
+        {{ (currentPhoto?.dateTaken || currentMedia?.dateTaken) | date:'mediumDate' }}
+      </span>
+      <span class="detail-pill" *ngIf="currentMedia?.width && currentMedia?.height">
+        <ion-icon name="scan-outline"></ion-icon>{{ currentMedia.width }} × {{ currentMedia.height }}
+      </span>
+      <span class="detail-pill" *ngIf="currentPhoto?.size || currentMedia?.size">
+        <ion-icon name="document-outline"></ion-icon>
+        {{ ((currentPhoto?.size || currentMedia?.size || 0) / 1024 / 1024).toFixed(1) }} MB
+      </span>
+      <span class="detail-pill" *ngIf="currentMedia?.type === 'video' && currentMedia.duration">
+        <ion-icon name="time-outline"></ion-icon>{{ (currentMedia.duration / 1000).toFixed(0) }} sec
+      </span>
+    </footer>
   </div>
 </ion-content>

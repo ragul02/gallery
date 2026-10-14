@@ -30,6 +30,9 @@ export interface MediaStorePlugin {
     type: 'image' | 'video' 
   }): Promise<{ thumbnail: string }>;
 
+  /** Delete selected device media using Android's system confirmation UI. */
+  deleteMedia(options: { items: Array<{ id: string; type: 'image' | 'video' }> }): Promise<{ deleted: boolean }>;
+
   /**
    * Get all albums/folders
    */
@@ -113,6 +116,7 @@ const DebugMediaStore = {
   },
   scanMedia: OriginalMediaStore.scanMedia,
   getThumbnail: OriginalMediaStore.getThumbnail,
+  deleteMedia: (options) => OriginalMediaStore.deleteMedia(options),
   getAlbums: OriginalMediaStore.getAlbums,
   startMediaChangeListener: OriginalMediaStore.startMediaChangeListener,
   stopMediaChangeListener: OriginalMediaStore.stopMediaChangeListener,
