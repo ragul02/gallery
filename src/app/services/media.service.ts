@@ -2,12 +2,6 @@ import { Injectable } from '@angular/core';
 import { Preferences } from '@capacitor/preferences';
 import MediaStore, { MediaItem, AlbumInfo } from '../plugins/media-store.plugin';
 
-export interface CachedThumbnail {
-  id: string;
-  thumbnail: string;
-  timestamp: number;
-}
-
 export interface MediaFilter {
   type?: 'image' | 'video' | 'all';
   album?: string;
@@ -34,7 +28,6 @@ export class MediaService {
   private mediaChangeListenerActive = false;
 
   private readonly CACHE_KEY = 'media_cache';
-  private readonly THUMBNAIL_CACHE_KEY = 'thumbnail_cache';
   private readonly PERMISSION_KEY = 'has_media_permission';
   private readonly INITIAL_SCAN_KEY = 'initial_media_scan_done';
 
@@ -46,12 +39,15 @@ export class MediaService {
    * Check if permissions are granted
    */
   async checkPermissions(): Promise<boolean> {
+    console.log('🔵 MediaService: checkPermissions - START');
     try {
       const result = await MediaStore.checkPermissions();
+      console.log('🔵 MediaService: MediaStore.checkPermissions() result:', JSON.stringify(result));
       this.hasPermission = result.granted;
+      console.log('🔵 MediaService: hasPermission set to:', this.hasPermission);
       return result.granted;
     } catch (error) {
-      console.error('Error checking permissions:', error);
+      console.error('🔴 MediaService: Error checking permissions:', error);
       return false;
     }
   }
@@ -60,22 +56,51 @@ export class MediaService {
    * Request media permissions
    */
   async requestPermissions(): Promise<boolean> {
+    console.log('🔵 MediaService: requestPermissions - START');
     try {
-      const result = await MediaStore.requestPermissions();
-      this.hasPermission = result.granted;
-      
-      if (result.granted) {
-        await Preferences.set({
-          key: this.PERMISSION_KEY,
-          value: 'true'
-        });
+      const currentResult = await MediaStore.checkPermissions();
+      console.log('🔵 MediaService: Current permission status:', JSON.stringify(currentResult));
+
+      if (!currentResult.granted) {
+        console.log('🟡 MediaService: Permission not granted, requesting...');
+        console.log('🔵 MediaService: Calling MediaStore.requestPermissions()');
+        
+        const result = await MediaStore.requestPermissions();
+        
+        console.log('🔵 MediaService: MediaStore.requestPermissions() returned:', JSON.stringify(result));
+        
+        this.hasPermission = result.granted;
+        
+        if (result.granted) {
+          console.log('🟢 MediaService: Permission GRANTED, saving to preferences');
+          await Preferences.set({
+            key: this.PERMISSION_KEY,
+            value: 'true'
+          });
+        } else {
+          console.log('🔴 MediaService: Permission DENIED');
+        }
+        
+        return result.granted;
       }
-      
-      return result.granted;
+
+      console.log('🟢 MediaService: Permission already granted');
+      this.hasPermission = true;
+      return true;
     } catch (error) {
-      console.error('Error requesting permissions:', error);
+      console.error('🔴 MediaService: Error requesting permissions:', error);
+      console.error('🔴 MediaService: Error details:', JSON.stringify(error));
       return false;
     }
+  }
+
+  private hasMissingMediaPermission(result: {
+    granted: boolean;
+    images?: boolean;
+    video?: boolean;
+    storage?: boolean;
+  }): boolean {
+    return !result.granted;
   }
 
   /**
@@ -109,6 +134,7 @@ export class MediaService {
       return this.mediaItems;
     }
 
+    this.hasPermission = await this.checkPermissions();
     if (!this.hasPermission) {
       const granted = await this.requestPermissions();
       if (!granted) {
@@ -119,17 +145,15 @@ export class MediaService {
     this.isScanning = true;
 
     try {
-      // Load from cache first if not forcing refresh
       if (!options?.forceRefresh) {
         const cached = await this.loadCachedMedia();
         if (cached.length > 0) {
           this.mediaItems = cached;
-          this.isScanning = false;
+          await this.markInitialScanComplete();
           return cached;
         }
       }
 
-      // Scan media in batches
       const batchSize = 100;
       let offset = 0;
       let allMedia: MediaItem[] = [];
@@ -138,32 +162,21 @@ export class MediaService {
       while (hasMore) {
         const result = await MediaStore.scanMedia({
           limit: batchSize,
-          offset: offset,
+          offset,
           mediaType: 'all'
         });
 
-        // Flatten the nested array structure
-        const flatMedia: MediaItem[] = [];
-        if (result.media && Array.isArray(result.media)) {
-          for (const batch of result.media) {
-            if (Array.isArray(batch)) {
-              flatMedia.push(...batch);
-            }
-          }
-        }
-
+        const flatMedia = this.normalizeMediaList(result);
         if (flatMedia.length === 0) {
           hasMore = false;
         } else {
           allMedia = allMedia.concat(flatMedia);
           offset += batchSize;
 
-          // Report progress
           if (options?.progressCallback) {
             options.progressCallback(allMedia.length, allMedia.length);
           }
 
-          // Stop if we got fewer than batchSize items
           if (flatMedia.length < batchSize) {
             hasMore = false;
           }
@@ -171,11 +184,8 @@ export class MediaService {
       }
 
       this.mediaItems = allMedia;
-      
-      // Cache the results
       await this.cacheMedia(allMedia);
       await this.markInitialScanComplete();
-
       return allMedia;
     } catch (error) {
       console.error('Error scanning media:', error);
@@ -195,19 +205,19 @@ export class MediaService {
   ): MediaItem[] {
     let filtered = [...this.mediaItems];
 
-    // Apply filters
     if (filter?.type && filter.type !== 'all') {
       filtered = filtered.filter(item => item.type === filter.type);
     }
 
     if (filter?.album) {
-      filtered = filtered.filter(item => item.bucket === filter.album);
+      filtered = filtered.filter(item => {
+        const albumKey = (item as MediaItem & { bucketId?: string }).bucketId ?? item.bucket;
+        return albumKey === filter.album || item.bucket === filter.album;
+      });
     }
 
-    // Apply sorting
     filtered = this.sortMedia(filtered, sortType);
 
-    // Apply limit
     if (limit) {
       filtered = filtered.slice(0, limit);
     }
@@ -221,17 +231,17 @@ export class MediaService {
   private sortMedia(items: MediaItem[], sortType: MediaSortType): MediaItem[] {
     switch (sortType) {
       case MediaSortType.DATE_DESC:
-        return items.sort((a, b) => b.dateTaken - a.dateTaken);
+        return items.sort((a, b) => (Number(b.dateTaken) || 0) - (Number(a.dateTaken) || 0));
       case MediaSortType.DATE_ASC:
-        return items.sort((a, b) => a.dateTaken - b.dateTaken);
+        return items.sort((a, b) => (Number(a.dateTaken) || 0) - (Number(b.dateTaken) || 0));
       case MediaSortType.NAME_ASC:
-        return items.sort((a, b) => a.name.localeCompare(b.name));
+        return items.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       case MediaSortType.NAME_DESC:
-        return items.sort((a, b) => b.name.localeCompare(a.name));
+        return items.sort((a, b) => (b.name || '').localeCompare(a.name || ''));
       case MediaSortType.SIZE_DESC:
-        return items.sort((a, b) => b.size - a.size);
+        return items.sort((a, b) => (Number(b.size) || 0) - (Number(a.size) || 0));
       case MediaSortType.SIZE_ASC:
-        return items.sort((a, b) => a.size - b.size);
+        return items.sort((a, b) => (Number(a.size) || 0) - (Number(b.size) || 0));
       default:
         return items;
     }
@@ -255,14 +265,26 @@ export class MediaService {
 
       // Cache the thumbnail
       this.thumbnailCache.set(mediaId, result.thumbnail);
-      await this.cacheThumbnail(mediaId, result.thumbnail);
-
       return result.thumbnail;
     } catch (error) {
       console.error('Error getting thumbnail:', error);
       // Return placeholder
       return 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iI2VlZSIvPjwvc3ZnPg==';
     }
+  }
+
+  async deleteMedia(items: Array<Pick<MediaItem, 'id' | 'type'>>): Promise<boolean> {
+    if (items.length === 0) return true;
+    const result = await MediaStore.deleteMedia({
+      items: items.map(({ id, type }) => ({ id, type }))
+    });
+    if (!result.deleted) return false;
+
+    const deletedKeys = new Set(items.map(item => `${item.type}:${item.id}`));
+    this.mediaItems = this.mediaItems.filter(item => !deletedKeys.has(`${item.type}:${item.id}`));
+    items.forEach(item => this.thumbnailCache.delete(item.id));
+    await this.cacheMedia(this.mediaItems);
+    return true;
   }
 
   /**
@@ -344,8 +366,17 @@ export class MediaService {
   private async loadCachedMedia(): Promise<MediaItem[]> {
     try {
       const result = await Preferences.get({ key: this.CACHE_KEY });
-      if (result.value) {
-        return JSON.parse(result.value);
+      if (!result.value) {
+        return [];
+      }
+
+      const parsed = JSON.parse(result.value);
+      if (Array.isArray(parsed)) {
+        return parsed as MediaItem[];
+      }
+
+      if (parsed && Array.isArray(parsed.media)) {
+        return this.normalizeMediaList(parsed as { media?: MediaItem[] });
       }
     } catch (error) {
       console.error('Error loading cached media:', error);
@@ -353,54 +384,23 @@ export class MediaService {
     return [];
   }
 
-  /**
-   * Cache a single thumbnail
-   */
-  private async cacheThumbnail(id: string, thumbnail: string) {
-    try {
-      const cacheEntry: CachedThumbnail = {
-        id,
-        thumbnail,
-        timestamp: Date.now()
-      };
+  private normalizeMediaList(result: { media?: MediaItem[] | ArrayLike<MediaItem> } | MediaItem[] | null | undefined): MediaItem[] {
+    const entries = Array.isArray(result) ? result : result?.media ?? [];
+    const items: MediaItem[] = [];
 
-      // Store in preferences (limited by size, so we only cache recent ones)
-      const existingCache = await this.loadThumbnailCache();
-      existingCache.set(id, cacheEntry);
-
-      // Keep only last 100 thumbnails
-      if (existingCache.size > 100) {
-        const entries = Array.from(existingCache.entries());
-        entries.sort((a, b) => b[1].timestamp - a[1].timestamp);
-        existingCache.clear();
-        entries.slice(0, 100).forEach(([key, value]) => {
-          existingCache.set(key, value);
-        });
+    for (const entry of Array.from(entries as ArrayLike<MediaItem>)) {
+      if (!entry) {
+        continue;
       }
 
-      await Preferences.set({
-        key: this.THUMBNAIL_CACHE_KEY,
-        value: JSON.stringify(Array.from(existingCache.entries()))
-      });
-    } catch (error) {
-      console.error('Error caching thumbnail:', error);
-    }
-  }
-
-  /**
-   * Load thumbnail cache
-   */
-  private async loadThumbnailCache(): Promise<Map<string, CachedThumbnail>> {
-    try {
-      const result = await Preferences.get({ key: this.THUMBNAIL_CACHE_KEY });
-      if (result.value) {
-        const entries = JSON.parse(result.value);
-        return new Map(entries);
+      if (Array.isArray(entry)) {
+        items.push(...entry);
+      } else {
+        items.push(entry as MediaItem);
       }
-    } catch (error) {
-      console.error('Error loading thumbnail cache:', error);
     }
-    return new Map();
+
+    return items.filter(Boolean);
   }
 
   /**
@@ -410,7 +410,6 @@ export class MediaService {
     this.mediaItems = [];
     this.thumbnailCache.clear();
     await Preferences.remove({ key: this.CACHE_KEY });
-    await Preferences.remove({ key: this.THUMBNAIL_CACHE_KEY });
   }
 
   /**
@@ -432,5 +431,9 @@ export class MediaService {
    */
   getVideoCount(): number {
     return this.mediaItems.filter(item => item.type === 'video').length;
+  }
+
+  getTotalSize(): number {
+    return this.mediaItems.reduce((total, item) => total + (Number(item.size) || 0), 0);
   }
 }

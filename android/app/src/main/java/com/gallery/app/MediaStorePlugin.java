@@ -1,22 +1,25 @@
 package com.gallery.app;
 
 import android.Manifest;
+import android.app.Activity;
+import android.app.PendingIntent;
 import android.content.ContentResolver;
-import android.content.ContentUris;
-import android.content.pm.PackageManager;
-import android.database.ContentObserver;
 import android.database.Cursor;
+import android.database.ContentObserver;
 import android.graphics.Bitmap;
+import android.content.IntentSender;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
-import android.util.Log;
+import android.util.Base64;
 import android.util.Size;
 
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
+import androidx.activity.result.ActivityResult;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.IntentSenderRequest;
+import androidx.activity.result.contract.ActivityResultContracts;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -24,447 +27,356 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
-import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import com.getcapacitor.annotation.Permission;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
+import java.util.HashMap;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
+import java.util.Map;
+import org.json.JSONObject;
 
 @CapacitorPlugin(
     name = "MediaStore",
     permissions = {
         @Permission(strings = { Manifest.permission.READ_EXTERNAL_STORAGE }, alias = "storage"),
-        @Permission(strings = { Manifest.permission.READ_MEDIA_IMAGES }, alias = "images"),
-        @Permission(strings = { Manifest.permission.READ_MEDIA_VIDEO }, alias = "video")
+        @Permission(strings = { Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO }, alias = "media"),
+        @Permission(strings = { Manifest.permission.WRITE_EXTERNAL_STORAGE }, alias = "write")
     }
 )
 public class MediaStorePlugin extends Plugin {
-    private static final String TAG = "MediaStorePlugin";
-    private MediaContentObserver mediaObserver;
+    private ContentObserver mediaObserver;
+    private ActivityResultLauncher<IntentSenderRequest> deleteRequestLauncher;
+    private PluginCall pendingDeleteCall;
+    private List<Uri> pendingDeleteUris = new ArrayList<>();
+    private static final String[] COMMON_PROJECTION = {
+        MediaStore.MediaColumns._ID,
+        MediaStore.MediaColumns.DISPLAY_NAME,
+        MediaStore.MediaColumns.DATE_ADDED,
+        MediaStore.MediaColumns.SIZE,
+        MediaStore.MediaColumns.MIME_TYPE,
+        MediaStore.MediaColumns.WIDTH,
+        MediaStore.MediaColumns.HEIGHT,
+        MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
+        MediaStore.MediaColumns.BUCKET_ID
+    };
+
+    @Override
+    public void load() {
+        deleteRequestLauncher = getBridge().registerForActivityResult(
+            new ActivityResultContracts.StartIntentSenderForResult(),
+            this::onDeleteRequestResult
+        );
+    }
+
+    @PluginMethod
+    public void deleteMedia(PluginCall call) {
+        JSArray items = call.getArray("items");
+        if (items == null || items.length() == 0) {
+            call.resolve(new JSObject().put("deleted", true));
+            return;
+        }
+        List<Uri> uris = new ArrayList<>();
+        try {
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject item = items.getJSONObject(i);
+                String id = item.getString("id");
+                String type = item.getString("type");
+                Uri collection = "video".equals(type)
+                    ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                    : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+                uris.add(Uri.withAppendedPath(collection, id));
+            }
+        } catch (Exception e) {
+            call.reject("Invalid media selection", e);
+            return;
+        }
+
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                PendingIntent request = MediaStore.createDeleteRequest(getContext().getContentResolver(), uris);
+                launchDeleteConfirmation(call, uris, request.getIntentSender());
+            } catch (Exception e) {
+                call.reject("Unable to request media deletion", e);
+            }
+        } else if (Build.VERSION.SDK_INT == 29) {
+            deleteForAndroidTen(call, uris);
+        } else if (getPermissionState("write") != com.getcapacitor.PermissionState.GRANTED) {
+            pendingDeleteUris = uris;
+            requestPermissionForAlias("write", call, "legacyDeletePermissionCallback");
+        } else {
+            deleteUris(call, uris);
+        }
+    }
+
+    @PermissionCallback
+    private void legacyDeletePermissionCallback(PluginCall call) {
+        if (getPermissionState("write") != com.getcapacitor.PermissionState.GRANTED) {
+            call.resolve(new JSObject().put("deleted", false));
+            pendingDeleteUris.clear();
+            return;
+        }
+        deleteUris(call, pendingDeleteUris);
+        pendingDeleteUris.clear();
+    }
+
+    private void deleteForAndroidTen(PluginCall call, List<Uri> uris) {
+        try {
+            deleteUrisNow(uris);
+            call.resolve(new JSObject().put("deleted", true));
+        } catch (android.app.RecoverableSecurityException e) {
+            launchDeleteConfirmation(call, uris, e.getUserAction().getActionIntent().getIntentSender());
+        } catch (Exception e) {
+            call.reject("Unable to delete selected media", e);
+        }
+    }
+
+    private void launchDeleteConfirmation(PluginCall call, List<Uri> uris, IntentSender sender) {
+        pendingDeleteCall = call;
+        pendingDeleteUris = new ArrayList<>(uris);
+        getBridge().saveCall(call);
+        deleteRequestLauncher.launch(new IntentSenderRequest.Builder(sender).build());
+    }
+
+    private void onDeleteRequestResult(ActivityResult result) {
+        PluginCall call = pendingDeleteCall;
+        pendingDeleteCall = null;
+        if (call == null) return;
+        if (result.getResultCode() != Activity.RESULT_OK) {
+            call.resolve(new JSObject().put("deleted", false));
+            pendingDeleteUris.clear();
+            return;
+        }
+        try {
+            if (Build.VERSION.SDK_INT == 29) deleteUrisNow(pendingDeleteUris);
+            call.resolve(new JSObject().put("deleted", true));
+        } catch (Exception e) {
+            call.reject("Unable to delete selected media", e);
+        } finally {
+            pendingDeleteUris.clear();
+        }
+    }
+
+    private void deleteUris(PluginCall call, List<Uri> uris) {
+        try {
+            deleteUrisNow(uris);
+            call.resolve(new JSObject().put("deleted", true));
+        } catch (Exception e) {
+            call.reject("Unable to delete selected media", e);
+        }
+    }
+
+    private void deleteUrisNow(List<Uri> uris) {
+        ContentResolver resolver = getContext().getContentResolver();
+        for (Uri uri : uris) resolver.delete(uri, null, null);
+    }
 
     @PluginMethod
     public void checkPermissions(PluginCall call) {
-        JSObject result = new JSObject();
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Android 13+
-            boolean hasImages = ContextCompat.checkSelfPermission(
-                getContext(), 
-                Manifest.permission.READ_MEDIA_IMAGES
-            ) == PackageManager.PERMISSION_GRANTED;
-            
-            boolean hasVideo = ContextCompat.checkSelfPermission(
-                getContext(), 
-                Manifest.permission.READ_MEDIA_VIDEO
-            ) == PackageManager.PERMISSION_GRANTED;
-            
-            result.put("granted", hasImages && hasVideo);
-            result.put("images", hasImages);
-            result.put("video", hasVideo);
-        } else {
-            // Legacy permissions
-            boolean hasStorage = ContextCompat.checkSelfPermission(
-                getContext(), 
-                Manifest.permission.READ_EXTERNAL_STORAGE
-            ) == PackageManager.PERMISSION_GRANTED;
-            
-            result.put("granted", hasStorage);
-            result.put("storage", hasStorage);
-        }
-        
+        JSObject result = permissionResult();
         call.resolve(result);
     }
 
     @PluginMethod
     public void requestPermissions(PluginCall call) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            // Android 13+
-            requestPermissionForAlias("images", call, "permissionsCallback");
-        } else {
-            // Legacy
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (getPermissionState("media") != com.getcapacitor.PermissionState.GRANTED) {
+                requestPermissionForAlias("media", call, "permissionsCallback");
+            } else {
+                call.resolve(permissionResult());
+            }
+        } else if (getPermissionState("storage") != com.getcapacitor.PermissionState.GRANTED) {
             requestPermissionForAlias("storage", call, "permissionsCallback");
+        } else {
+            call.resolve(permissionResult());
         }
     }
 
     @PermissionCallback
     private void permissionsCallback(PluginCall call) {
-        checkPermissions(call);
+        call.resolve(permissionResult());
+    }
+
+    private JSObject permissionResult() {
+        boolean images;
+        boolean video;
+        boolean storage;
+        if (Build.VERSION.SDK_INT >= 33) {
+            images = getPermissionState("media") == com.getcapacitor.PermissionState.GRANTED
+                && getContext().checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            video = getPermissionState("media") == com.getcapacitor.PermissionState.GRANTED
+                && getContext().checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            storage = images && video;
+        } else {
+            storage = getPermissionState("storage") == com.getcapacitor.PermissionState.GRANTED;
+            images = storage;
+            video = storage;
+        }
+        JSObject result = new JSObject();
+        result.put("granted", images && video);
+        result.put("images", images);
+        result.put("video", video);
+        result.put("storage", storage);
+        return result;
     }
 
     @PluginMethod
     public void scanMedia(PluginCall call) {
-        if (!hasRequiredPermissions()) {
-            call.reject("Permission denied");
+        if (!permissionResult().optBoolean("granted")) {
+            call.reject("Media permission has not been granted");
             return;
         }
-
-        int limit = call.getInt("limit", 100);
-        int offset = call.getInt("offset", 0);
-        String mediaType = call.getString("mediaType", "all"); // "image", "video", "all"
-
+        int limit = Math.max(1, call.getInt("limit", 100));
+        int offset = Math.max(0, call.getInt("offset", 0));
+        String type = call.getString("mediaType", "all");
+        JSArray media = new JSArray();
         try {
-            JSArray mediaList = new JSArray();
-            
-            if (!mediaType.equals("video")) {
-                mediaList.put(scanImages(limit, offset));
-            }
-            
-            if (!mediaType.equals("image")) {
-                mediaList.put(scanVideos(limit, offset));
-            }
-
+            ContentResolver resolver = getContext().getContentResolver();
+            queryMedia(resolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image", type, limit, offset, media);
+            queryMedia(resolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "video", type, limit, offset, media);
             JSObject result = new JSObject();
-            result.put("media", mediaList);
-            result.put("count", mediaList.length());
+            result.put("media", media);
+            result.put("count", media.length());
             call.resolve(result);
         } catch (Exception e) {
-            Log.e(TAG, "Error scanning media", e);
-            call.reject("Error scanning media: " + e.getMessage());
+            call.reject("Unable to scan device media", e);
         }
     }
 
-    private JSArray scanImages(int limit, int offset) {
-        JSArray images = new JSArray();
-        ContentResolver contentResolver = getContext().getContentResolver();
-
-        String[] projection = {
-            MediaStore.Images.Media._ID,
-            MediaStore.Images.Media.DISPLAY_NAME,
-            MediaStore.Images.Media.DATE_TAKEN,
-            MediaStore.Images.Media.SIZE,
-            MediaStore.Images.Media.DATA,
-            MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
-            MediaStore.Images.Media.WIDTH,
-            MediaStore.Images.Media.HEIGHT
-        };
-
-        String sortOrder = MediaStore.Images.Media.DATE_TAKEN + " DESC LIMIT " + limit + " OFFSET " + offset;
-
-        try (Cursor cursor = contentResolver.query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            projection,
-            null,
-            null,
-            sortOrder
-        )) {
-            if (cursor != null) {
-                int idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID);
-                int nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME);
-                int dateTakenColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_TAKEN);
-                int sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE);
-                int dataColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA);
-                int bucketColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME);
-                int widthColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.WIDTH);
-                int heightColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.HEIGHT);
-
-                while (cursor.moveToNext()) {
-                    long id = cursor.getLong(idColumn);
-                    String name = cursor.getString(nameColumn);
-                    long dateTaken = cursor.getLong(dateTakenColumn);
-                    long size = cursor.getLong(sizeColumn);
-                    String path = cursor.getString(dataColumn);
-                    String bucket = cursor.getString(bucketColumn);
-                    int width = cursor.getInt(widthColumn);
-                    int height = cursor.getInt(heightColumn);
-
-                    Uri contentUri = ContentUris.withAppendedId(
-                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                        id
-                    );
-
-                    JSObject image = new JSObject();
-                    image.put("id", String.valueOf(id));
-                    image.put("name", name);
-                    image.put("dateTaken", dateTaken);
-                    image.put("size", size);
-                    image.put("uri", contentUri.toString());
-                    image.put("path", path);
-                    image.put("type", "image");
-                    image.put("bucket", bucket != null ? bucket : "Unknown");
-                    image.put("width", width);
-                    image.put("height", height);
-
-                    images.put(image);
-                }
+    private void queryMedia(ContentResolver resolver, Uri collection, String kind, String requestedType,
+                            int limit, int offset, JSArray output) {
+        if (!"all".equals(requestedType) && !kind.equals(requestedType)) return;
+        String sort = MediaStore.MediaColumns.DATE_ADDED + " DESC";
+        String[] projection = "video".equals(kind)
+            ? new String[] {
+                MediaStore.MediaColumns._ID,
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.DATE_ADDED,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.MIME_TYPE,
+                MediaStore.MediaColumns.WIDTH,
+                MediaStore.MediaColumns.HEIGHT,
+                MediaStore.MediaColumns.DURATION,
+                MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
+                MediaStore.MediaColumns.BUCKET_ID
             }
-        } catch (Exception e) {
-            Log.e(TAG, "Error scanning images", e);
-        }
-
-        return images;
-    }
-
-    private JSArray scanVideos(int limit, int offset) {
-        JSArray videos = new JSArray();
-        ContentResolver contentResolver = getContext().getContentResolver();
-
-        String[] projection = {
-            MediaStore.Video.Media._ID,
-            MediaStore.Video.Media.DISPLAY_NAME,
-            MediaStore.Video.Media.DATE_TAKEN,
-            MediaStore.Video.Media.SIZE,
-            MediaStore.Video.Media.DATA,
-            MediaStore.Video.Media.BUCKET_DISPLAY_NAME,
-            MediaStore.Video.Media.DURATION,
-            MediaStore.Video.Media.WIDTH,
-            MediaStore.Video.Media.HEIGHT
-        };
-
-        String sortOrder = MediaStore.Video.Media.DATE_TAKEN + " DESC LIMIT " + limit + " OFFSET " + offset;
-
-        try (Cursor cursor = contentResolver.query(
-            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-            projection,
-            null,
-            null,
-            sortOrder
-        )) {
-            if (cursor != null) {
-                int idColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID);
-                int nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME);
-                int dateTakenColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_TAKEN);
-                int sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE);
-                int dataColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATA);
-                int bucketColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.BUCKET_DISPLAY_NAME);
-                int durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION);
-                int widthColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.WIDTH);
-                int heightColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.HEIGHT);
-
-                while (cursor.moveToNext()) {
-                    long id = cursor.getLong(idColumn);
-                    String name = cursor.getString(nameColumn);
-                    long dateTaken = cursor.getLong(dateTakenColumn);
-                    long size = cursor.getLong(sizeColumn);
-                    String path = cursor.getString(dataColumn);
-                    String bucket = cursor.getString(bucketColumn);
-                    long duration = cursor.getLong(durationColumn);
-                    int width = cursor.getInt(widthColumn);
-                    int height = cursor.getInt(heightColumn);
-
-                    Uri contentUri = ContentUris.withAppendedId(
-                        MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                        id
-                    );
-
-                    JSObject video = new JSObject();
-                    video.put("id", String.valueOf(id));
-                    video.put("name", name);
-                    video.put("dateTaken", dateTaken);
-                    video.put("size", size);
-                    video.put("uri", contentUri.toString());
-                    video.put("path", path);
-                    video.put("type", "video");
-                    video.put("bucket", bucket != null ? bucket : "Unknown");
-                    video.put("duration", duration);
-                    video.put("width", width);
-                    video.put("height", height);
-
-                    videos.put(video);
+            : COMMON_PROJECTION;
+        try (Cursor cursor = resolver.query(collection, projection, null, null, sort)) {
+            if (cursor == null) return;
+            int idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID);
+            int nameCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME);
+            int dateCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED);
+            int sizeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE);
+            int widthCol = cursor.getColumnIndex(MediaStore.MediaColumns.WIDTH);
+            int heightCol = cursor.getColumnIndex(MediaStore.MediaColumns.HEIGHT);
+            int durationCol = cursor.getColumnIndex(MediaStore.MediaColumns.DURATION);
+            int bucketCol = cursor.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME);
+            int bucketIdCol = cursor.getColumnIndex(MediaStore.MediaColumns.BUCKET_ID);
+            int skipped = 0;
+            int added = 0;
+            while (cursor.moveToNext()) {
+                if (skipped < offset) {
+                    skipped++;
+                    continue;
                 }
+                if (added >= limit) break;
+                long id = cursor.getLong(idCol);
+                Uri itemUri = Uri.withAppendedPath(collection, Long.toString(id));
+                JSObject item = new JSObject();
+                item.put("id", Long.toString(id));
+                item.put("key", kind + ":" + id);
+                item.put("name", cursor.getString(nameCol));
+                item.put("dateTaken", cursor.getLong(dateCol) * 1000L);
+                item.put("size", cursor.getLong(sizeCol));
+                item.put("uri", itemUri.toString());
+                item.put("path", itemUri.toString());
+                item.put("type", kind);
+                item.put("bucket", bucketCol >= 0 ? cursor.getString(bucketCol) : "");
+                if (bucketIdCol >= 0) item.put("bucketId", cursor.getString(bucketIdCol));
+                item.put("width", widthCol >= 0 ? cursor.getInt(widthCol) : 0);
+                item.put("height", heightCol >= 0 ? cursor.getInt(heightCol) : 0);
+                if ("video".equals(kind) && durationCol >= 0) item.put("duration", cursor.getLong(durationCol));
+                output.put(item);
+                added++;
             }
-        } catch (Exception e) {
-            Log.e(TAG, "Error scanning videos", e);
         }
-
-        return videos;
     }
 
     @PluginMethod
     public void getThumbnail(PluginCall call) {
-        if (!hasRequiredPermissions()) {
-            call.reject("Permission denied");
-            return;
-        }
-
-        String mediaId = call.getString("id");
-        String mediaType = call.getString("type", "image");
-        
-        if (mediaId == null) {
-            call.reject("Media ID is required");
-            return;
-        }
-
+        String id = call.getString("id");
+        String type = call.getString("type", "image");
+        if (id == null) { call.reject("Media id is required"); return; }
         try {
-            Bitmap thumbnail = null;
-            long id = Long.parseLong(mediaId);
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // Android 10+ use native thumbnail API
-                Uri contentUri;
-                if (mediaType.equals("video")) {
-                    contentUri = ContentUris.withAppendedId(
-                        MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                        id
-                    );
-                } else {
-                    contentUri = ContentUris.withAppendedId(
-                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                        id
-                    );
-                }
-
-                thumbnail = getContext().getContentResolver().loadThumbnail(
-                    contentUri,
-                    new Size(512, 512),
-                    null
-                );
+            Uri base = "video".equals(type) ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+            Uri uri = Uri.withAppendedPath(base, id);
+            Bitmap bitmap;
+            if (Build.VERSION.SDK_INT >= 29) {
+                bitmap = getContext().getContentResolver().loadThumbnail(uri, new Size(256, 256), null);
             } else {
-                // Legacy thumbnail generation
-                if (mediaType.equals("video")) {
-                    thumbnail = MediaStore.Video.Thumbnails.getThumbnail(
-                        getContext().getContentResolver(),
-                        id,
-                        MediaStore.Video.Thumbnails.MINI_KIND,
-                        null
-                    );
-                } else {
-                    thumbnail = MediaStore.Images.Thumbnails.getThumbnail(
-                        getContext().getContentResolver(),
-                        id,
-                        MediaStore.Images.Thumbnails.MINI_KIND,
-                        null
-                    );
-                }
+                long mediaId = Long.parseLong(id);
+                bitmap = "video".equals(type)
+                    ? MediaStore.Video.Thumbnails.getThumbnail(getContext().getContentResolver(), mediaId, MediaStore.Video.Thumbnails.MINI_KIND, null)
+                    : MediaStore.Images.Thumbnails.getThumbnail(getContext().getContentResolver(), mediaId, MediaStore.Images.Thumbnails.MINI_KIND, null);
             }
-
-            if (thumbnail != null) {
-                ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-                thumbnail.compress(Bitmap.CompressFormat.JPEG, 80, outputStream);
-                byte[] thumbnailBytes = outputStream.toByteArray();
-                
-                String base64Thumbnail;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    base64Thumbnail = Base64.getEncoder().encodeToString(thumbnailBytes);
-                } else {
-                    base64Thumbnail = android.util.Base64.encodeToString(thumbnailBytes, android.util.Base64.NO_WRAP);
-                }
-
-                JSObject result = new JSObject();
-                result.put("thumbnail", "data:image/jpeg;base64," + base64Thumbnail);
-                call.resolve(result);
-            } else {
-                call.reject("Failed to generate thumbnail");
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error getting thumbnail", e);
-            call.reject("Error getting thumbnail: " + e.getMessage());
-        }
+            if (bitmap == null) throw new IllegalStateException("Thumbnail unavailable");
+            ByteArrayOutputStream stream = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 72, stream);
+            JSObject result = new JSObject();
+            result.put("thumbnail", "data:image/jpeg;base64," + Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP));
+            call.resolve(result);
+        } catch (Exception e) { call.reject("Unable to load media thumbnail", e); }
     }
 
     @PluginMethod
     public void getAlbums(PluginCall call) {
-        if (!hasRequiredPermissions()) {
-            call.reject("Permission denied");
-            return;
+        if (!permissionResult().optBoolean("granted")) { call.resolve(new JSObject().put("albums", new JSArray())); return; }
+        Map<String, Integer> counts = new HashMap<>();
+        Map<String, String> ids = new HashMap<>();
+        ContentResolver resolver = getContext().getContentResolver();
+        collectAlbums(resolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, counts, ids);
+        collectAlbums(resolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI, counts, ids);
+        JSArray albums = new JSArray();
+        for (String name : counts.keySet()) {
+            JSObject album = new JSObject();
+            album.put("id", ids.get(name)); album.put("name", name); album.put("count", counts.get(name)); album.put("type", "auto");
+            albums.put(album);
         }
-
-        try {
-            JSArray albums = new JSArray();
-            ContentResolver contentResolver = getContext().getContentResolver();
-
-            // Get image buckets
-            String[] projection = {
-                MediaStore.Images.Media.BUCKET_ID,
-                MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
-                "COUNT(*) as count"
-            };
-
-            String sortOrder = MediaStore.Images.Media.BUCKET_DISPLAY_NAME + " ASC";
-
-            try (Cursor cursor = contentResolver.query(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                new String[]{
-                    MediaStore.Images.Media.BUCKET_ID,
-                    MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
-                    MediaStore.Images.Media._ID
-                },
-                null,
-                null,
-                sortOrder
-            )) {
-                if (cursor != null) {
-                    List<String> seenBuckets = new ArrayList<>();
-                    
-                    int bucketIdColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID);
-                    int bucketNameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME);
-
-                    while (cursor.moveToNext()) {
-                        String bucketId = cursor.getString(bucketIdColumn);
-                        String bucketName = cursor.getString(bucketNameColumn);
-
-                        if (bucketId != null && !seenBuckets.contains(bucketId)) {
-                            seenBuckets.add(bucketId);
-                            
-                            // Count media in this bucket
-                            int count = getMediaCountInBucket(bucketId);
-
-                            JSObject album = new JSObject();
-                            album.put("id", bucketId);
-                            album.put("name", bucketName != null ? bucketName : "Unknown");
-                            album.put("count", count);
-                            album.put("type", "auto");
-
-                            albums.put(album);
-                        }
-                    }
-                }
-            }
-
-            JSObject result = new JSObject();
-            result.put("albums", albums);
-            call.resolve(result);
-        } catch (Exception e) {
-            Log.e(TAG, "Error getting albums", e);
-            call.reject("Error getting albums: " + e.getMessage());
-        }
+        call.resolve(new JSObject().put("albums", albums));
     }
 
-    private int getMediaCountInBucket(String bucketId) {
-        ContentResolver contentResolver = getContext().getContentResolver();
-        String selection = MediaStore.Images.Media.BUCKET_ID + " = ?";
-        String[] selectionArgs = { bucketId };
-
-        try (Cursor cursor = contentResolver.query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            new String[]{"COUNT(*) as count"},
-            selection,
-            selectionArgs,
-            null
-        )) {
-            if (cursor != null && cursor.moveToFirst()) {
-                return cursor.getInt(0);
+    private void collectAlbums(ContentResolver resolver, Uri collection, Map<String, Integer> counts, Map<String, String> ids) {
+        String[] columns = { MediaStore.MediaColumns.BUCKET_DISPLAY_NAME, MediaStore.MediaColumns.BUCKET_ID };
+        try (Cursor cursor = resolver.query(collection, columns, null, null, null)) {
+            if (cursor == null) return;
+            while (cursor.moveToNext()) {
+                String name = cursor.getString(0);
+                String id = cursor.getString(1);
+                if (name == null) name = "Unknown";
+                counts.put(name, counts.containsKey(name) ? counts.get(name) + 1 : 1);
+                ids.put(name, id == null ? name : id);
             }
-        } catch (Exception e) {
-            Log.e(TAG, "Error counting media in bucket", e);
         }
-
-        return 0;
     }
 
     @PluginMethod
     public void startMediaChangeListener(PluginCall call) {
         if (mediaObserver == null) {
-            mediaObserver = new MediaContentObserver(new Handler(Looper.getMainLooper()));
-            getContext().getContentResolver().registerContentObserver(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                true,
-                mediaObserver
-            );
-            getContext().getContentResolver().registerContentObserver(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                true,
-                mediaObserver
-            );
+            mediaObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
+                @Override
+                public void onChange(boolean selfChange, Uri uri) {
+                    JSObject event = new JSObject();
+                    event.put("event", "changed");
+                    event.put("timestamp", System.currentTimeMillis());
+                    notifyListeners("mediaChanged", event);
+                }
+            };
+            ContentResolver resolver = getContext().getContentResolver();
+            resolver.registerContentObserver(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, mediaObserver);
+            resolver.registerContentObserver(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, mediaObserver);
         }
-
-        JSObject result = new JSObject();
-        result.put("listening", true);
-        call.resolve(result);
+        call.resolve(new JSObject().put("listening", true));
     }
 
     @PluginMethod
@@ -473,48 +385,15 @@ public class MediaStorePlugin extends Plugin {
             getContext().getContentResolver().unregisterContentObserver(mediaObserver);
             mediaObserver = null;
         }
-
-        JSObject result = new JSObject();
-        result.put("listening", false);
-        call.resolve(result);
+        call.resolve(new JSObject().put("listening", false));
     }
 
-    public boolean hasRequiredPermissions() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            return ContextCompat.checkSelfPermission(
-                getContext(), 
-                Manifest.permission.READ_MEDIA_IMAGES
-            ) == PackageManager.PERMISSION_GRANTED;
-        } else {
-            return ContextCompat.checkSelfPermission(
-                getContext(), 
-                Manifest.permission.READ_EXTERNAL_STORAGE
-            ) == PackageManager.PERMISSION_GRANTED;
+    @Override
+    protected void handleOnDestroy() {
+        if (mediaObserver != null && getContext() != null) {
+            getContext().getContentResolver().unregisterContentObserver(mediaObserver);
+            mediaObserver = null;
         }
-    }
-
-    private class MediaContentObserver extends ContentObserver {
-        public MediaContentObserver(Handler handler) {
-            super(handler);
-        }
-
-        @Override
-        public void onChange(boolean selfChange) {
-            super.onChange(selfChange);
-            notifyMediaChanged();
-        }
-
-        @Override
-        public void onChange(boolean selfChange, Uri uri) {
-            super.onChange(selfChange, uri);
-            notifyMediaChanged();
-        }
-
-        private void notifyMediaChanged() {
-            JSObject data = new JSObject();
-            data.put("event", "mediaChanged");
-            data.put("timestamp", System.currentTimeMillis());
-            notifyListeners("mediaChanged", data);
-        }
+        super.handleOnDestroy();
     }
 }

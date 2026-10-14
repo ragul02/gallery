@@ -23,6 +23,7 @@ export class HomePage implements OnInit, OnDestroy {
   
   currentSort: MediaSortType = MediaSortType.DATE_DESC;
   currentFilter: MediaFilterType = MediaFilterType.ALL;
+  readonly MediaFilterType = MediaFilterType;
   sortTypes = SortType;
   
   isLoading = false;
@@ -31,8 +32,12 @@ export class HomePage implements OnInit, OnDestroy {
   currentBatch = 0;
   
   // Thumbnail loading queue
-  private thumbnailQueue: string[] = [];
+  private thumbnailQueue: MediaItemView[] = [];
   private loadingThumbnails = false;
+  private longPressTimer?: ReturnType<typeof setTimeout>;
+  private suppressNextMediaClick = false;
+  selectionMode = false;
+  selectedMediaKeys = new Set<string>();
 
   constructor(
     public photoService: PhotoService,
@@ -44,6 +49,7 @@ export class HomePage implements OnInit, OnDestroy {
   ) {}
 
   async ngOnInit() {
+    console.log('🔵 HomePage: ngOnInit called');
     await this.initializeGallery();
   }
 
@@ -52,6 +58,8 @@ export class HomePage implements OnInit, OnDestroy {
   }
 
   async ionViewWillEnter() {
+    await this.photoService.whenReady();
+
     // Check for album filter from query params
     const albumFilter = this.router.routerState.snapshot.root.queryParams['album'];
     if (albumFilter) {
@@ -60,82 +68,58 @@ export class HomePage implements OnInit, OnDestroy {
     } else {
       this.loadLegacyPhotos();
       if (this.hasPermission && this.mediaItems.length > 0) {
-        this.loadNextBatch();
+        await this.refreshMedia();
       }
     }
   }
 
   async initializeGallery() {
-    // Check if initial scan has been done
+    console.log('🔵 HomePage: initializeGallery - START');
+    await this.photoService.whenReady();
+    console.log('🔵 HomePage: PhotoService ready');
+    
+    this.loadLegacyPhotos();
+    console.log('🔵 HomePage: Legacy photos loaded:', this.photos.length);
+
     const hasScanned = await this.mediaService.hasCompletedInitialScan();
+    console.log('🔵 HomePage: hasCompletedInitialScan:', hasScanned);
     
-    if (!hasScanned) {
-      await this.promptInitialScan();
-    } else {
-      // Check permissions
-      this.hasPermission = await this.mediaService.checkPermissions();
-      
-      if (this.hasPermission) {
-        await this.loadMediaFromStore();
-      } else {
-        // Fall back to legacy photos
-        this.loadLegacyPhotos();
-      }
-    }
-  }
+    this.hasPermission = await this.mediaService.checkPermissions();
+    console.log('🔵 HomePage: checkPermissions result:', this.hasPermission);
 
-  async promptInitialScan() {
-    const alert = await this.alertController.create({
-      header: 'Welcome to Gallery!',
-      message: 'Would you like to scan your device for photos and videos? This app will automatically organize your media into albums.',
-      buttons: [
-        {
-          text: 'Not Now',
-          role: 'cancel',
-          handler: () => {
-            this.loadLegacyPhotos();
-          }
-        },
-        {
-          text: 'Scan Device',
-          handler: async () => {
-            await this.scanDeviceMedia();
-          }
-        }
-      ],
-      backdropDismiss: false
-    });
-    await alert.present();
-  }
-
-  async scanDeviceMedia() {
-    // Request permissions first
-    const granted = await this.mediaService.requestPermissions();
-    
-    if (!granted) {
-      const alert = await this.alertController.create({
-        header: 'Permission Required',
-        message: 'Please grant storage permission to scan your photos and videos. You can change this in app settings.',
-        buttons: [
-          {
-            text: 'Cancel',
-            role: 'cancel',
-            handler: () => {
-              this.loadLegacyPhotos();
-            }
-          },
-          {
-            text: 'Try Again',
-            handler: async () => {
-              await this.scanDeviceMedia();
-            }
-          }
-        ]
-      });
-      await alert.present();
+    if (!this.hasPermission) {
+      console.log('🟡 HomePage: No permission, calling scanDeviceMedia with showMessage=false, forceRefresh=false');
+      await this.scanDeviceMedia(false, false);
       return;
     }
 
+    console.log('🟢 HomePage: Has permission, calling scanDeviceMedia with showMessage=false, forceRefresh=' + !hasScanned);
+    await this.scanDeviceMedia(false, !hasScanned);
+  }
+
+  async scanDeviceMedia(showPermissionMessage = true, forceRefresh = true) {
+    console.log('🔵 HomePage: scanDeviceMedia - START', { showPermissionMessage, forceRefresh });
+    console.log('🔵 HomePage: About to call mediaService.requestPermissions()');
+    
+    const granted = await this.mediaService.requestPermissions();
+    
+    console.log('🔵 HomePage: mediaService.requestPermissions() returned:', granted);
+    
+    if (!granted) {
+      this.hasPermission = false;
+      console.log('🔴 HomePage: Permission NOT granted');
+      if (showPermissionMessage) {
+        const alert = await this.alertController.create({
+          header: 'Permission Required',
+          message: 'Allow photo and video access to scan your device media. You can change this in app settings.',
+          buttons: ['OK']
+        });
+        await alert.present();
+      }
+      return;
+    }
+
+    console.log('🟢 HomePage: Permission granted! Setting hasPermission = true');
     this.hasPermission = true;
 
     // Show loading
@@ -144,32 +128,27 @@ export class HomePage implements OnInit, OnDestroy {
       spinner: 'circles'
     });
     await loading.present();
+    console.log('🔵 HomePage: Loading dialog shown');
 
     try {
-      let loadedCount = 0;
+      console.log('🔵 HomePage: Starting media scan...');
       await this.mediaService.scanAllMedia({
-        forceRefresh: true,
-        progressCallback: (loaded, total) => {
-          loadedCount = loaded;
+        forceRefresh,
+        progressCallback: (loaded) => {
+          console.log('🔵 HomePage: Scan progress:', loaded, 'files');
           loading.message = `Found ${loaded} media files...`;
         }
       });
 
       await loading.dismiss();
-
-      // Show success message
-      const successAlert = await this.alertController.create({
-        header: 'Scan Complete!',
-        message: `Found ${loadedCount} photos and videos on your device.`,
-        buttons: ['OK']
-      });
-      await successAlert.present();
+      console.log('🟢 HomePage: Media scan completed successfully');
 
       // Load the media
       await this.loadMediaFromStore();
+      console.log('🟢 HomePage: Media loaded to display');
     } catch (error) {
       await loading.dismiss();
-      console.error('Error scanning media:', error);
+      console.error('🔴 HomePage: Error scanning media:', error);
       
       const errorAlert = await this.alertController.create({
         header: 'Scan Failed',
@@ -233,8 +212,11 @@ export class HomePage implements OnInit, OnDestroy {
       
       // Queue thumbnails for loading
       newItems.forEach(item => {
-        if (!this.thumbnails.has(item.id)) {
-          this.thumbnailQueue.push(item.id);
+        const cachedThumbnail = this.thumbnails.get(item.id);
+        if (cachedThumbnail) {
+          item.thumbnailUrl = cachedThumbnail;
+        } else {
+          this.thumbnailQueue.push(item);
         }
       });
       
@@ -250,14 +232,14 @@ export class HomePage implements OnInit, OnDestroy {
     this.loadingThumbnails = true;
 
     // Load thumbnails in small batches to avoid overwhelming the system
-    const batchSize = 5;
+    const batchSize = 8;
     while (this.thumbnailQueue.length > 0) {
       const batch = this.thumbnailQueue.splice(0, batchSize);
       
       await Promise.all(
-        batch.map(async (mediaId) => {
-          const media = this.displayedMedia.find(m => m.id === mediaId);
-          if (media && !this.thumbnails.has(mediaId)) {
+        batch.map(async (media) => {
+          const mediaId = media.id;
+          if (!this.thumbnails.has(mediaId)) {
             try {
               const thumbnail = await this.mediaService.getThumbnail(mediaId, media.type);
               this.thumbnails.set(mediaId, thumbnail);
@@ -269,8 +251,6 @@ export class HomePage implements OnInit, OnDestroy {
         })
       );
 
-      // Small delay between batches
-      await new Promise(resolve => setTimeout(resolve, 100));
     }
 
     this.loadingThumbnails = false;
@@ -298,12 +278,85 @@ export class HomePage implements OnInit, OnDestroy {
     this.photos = this.photoService.getPhotos(this.currentSort as any);
   }
 
+  openPhotoViewer(photo: Photo) {
+    this.router.navigate(['/viewer', photo.id], {
+      queryParams: { source: 'local' }
+    });
+  }
+
   async openMediaViewer(media: MediaItemView) {
     this.router.navigate(['/viewer', media.id], {
       queryParams: {
         filter: this.currentFilter !== MediaFilterType.ALL ? this.currentFilter : null
       }
     });
+  }
+
+  private mediaKey(media: MediaItemView): string {
+    return `${media.type}:${media.id}`;
+  }
+
+  startMediaLongPress(media: MediaItemView) {
+    this.cancelMediaLongPress();
+    this.longPressTimer = setTimeout(() => {
+      this.selectionMode = true;
+      this.selectedMediaKeys.add(this.mediaKey(media));
+      this.suppressNextMediaClick = true;
+    }, 480);
+  }
+
+  cancelMediaLongPress() {
+    if (this.longPressTimer) {
+      clearTimeout(this.longPressTimer);
+      this.longPressTimer = undefined;
+    }
+  }
+
+  onMediaCardClick(media: MediaItemView) {
+    if (this.suppressNextMediaClick) {
+      this.suppressNextMediaClick = false;
+      return;
+    }
+    if (this.selectionMode) {
+      const key = this.mediaKey(media);
+      this.selectedMediaKeys.has(key) ? this.selectedMediaKeys.delete(key) : this.selectedMediaKeys.add(key);
+      if (this.selectedMediaKeys.size === 0) this.selectionMode = false;
+      return;
+    }
+    void this.openMediaViewer(media);
+  }
+
+  onMediaContextMenu(event: MouseEvent, media: MediaItemView) {
+    event.preventDefault();
+    this.selectionMode = true;
+    this.selectedMediaKeys.add(this.mediaKey(media));
+  }
+
+  cancelSelection() {
+    this.cancelMediaLongPress();
+    this.selectionMode = false;
+    this.selectedMediaKeys.clear();
+  }
+
+  async deleteSelectedMedia() {
+    const selected = this.mediaItems.filter(item => this.selectedMediaKeys.has(this.mediaKey(item)));
+    if (selected.length === 0) return;
+
+    try {
+      const deleted = await this.mediaService.deleteMedia(selected);
+      if (deleted) {
+        this.cancelSelection();
+        await this.refreshMedia();
+      }
+    } catch (error) {
+      console.error('Unable to delete selected media:', error);
+      const alert = await this.alertController.create({
+        header: 'Could not delete media',
+        message: 'Android could not delete the selected item(s). Try again or check the app’s media access.',
+        buttons: ['OK']
+      });
+      await alert.present();
+    }
   }
 
   async addPhotoToGallery() {
@@ -345,31 +398,22 @@ export class HomePage implements OnInit, OnDestroy {
 
   async showSortOptions() {
     const actionSheet = await this.actionSheetController.create({
-      header: 'Sort & Filter',
+      header: 'Filter and sort',
       buttons: [
         {
-          text: 'All Media',
-          icon: this.currentFilter === MediaFilterType.ALL ? 'checkmark' : 'image',
-          handler: () => {
-            this.currentFilter = MediaFilterType.ALL;
-            this.refreshMedia();
-          }
+          text: 'All media',
+          icon: this.currentFilter === MediaFilterType.ALL ? 'checkmark' : 'albums-outline',
+          handler: () => { void this.selectFilter(MediaFilterType.ALL); }
         },
         {
-          text: 'Images Only',
-          icon: this.currentFilter === MediaFilterType.IMAGES ? 'checkmark' : 'images',
-          handler: () => {
-            this.currentFilter = MediaFilterType.IMAGES;
-            this.refreshMedia();
-          }
+          text: 'Photos',
+          icon: this.currentFilter === MediaFilterType.IMAGES ? 'checkmark' : 'image-outline',
+          handler: () => { void this.selectFilter(MediaFilterType.IMAGES); }
         },
         {
-          text: 'Videos Only',
-          icon: this.currentFilter === MediaFilterType.VIDEOS ? 'checkmark' : 'videocam',
-          handler: () => {
-            this.currentFilter = MediaFilterType.VIDEOS;
-            this.refreshMedia();
-          }
+          text: 'Videos',
+          icon: this.currentFilter === MediaFilterType.VIDEOS ? 'checkmark' : 'videocam-outline',
+          handler: () => { void this.selectFilter(MediaFilterType.VIDEOS); }
         },
         {
           text: 'Date (Newest First)',
@@ -420,6 +464,12 @@ export class HomePage implements OnInit, OnDestroy {
     await this.loadMediaFromStore();
   }
 
+  async selectFilter(filter: MediaFilterType) {
+    if (this.currentFilter === filter) return;
+    this.currentFilter = filter;
+    await this.refreshMedia();
+  }
+
   get totalMediaCount(): number {
     return this.hasPermission ? this.mediaService.getTotalCount() : this.photos.length;
   }
@@ -436,4 +486,3 @@ export class HomePage implements OnInit, OnDestroy {
     return media.id;
   }
 }
-

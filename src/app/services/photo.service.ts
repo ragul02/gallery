@@ -13,9 +13,14 @@ export class PhotoService {
   private PHOTO_STORAGE = 'photos';
   private ALBUM_STORAGE = 'albums';
   private INITIAL_SCAN_KEY = 'initial_scan_done';
+  private readonly savedPhotosPromise: Promise<void>;
 
   constructor() {
-    this.loadSaved();
+    this.savedPhotosPromise = this.loadSaved();
+  }
+
+  async whenReady(): Promise<void> {
+    await this.savedPhotosPromise;
   }
 
   // Load photos and albums from storage
@@ -205,7 +210,8 @@ export class PhotoService {
     const reader = new FileReader();
     reader.onerror = reject;
     reader.onload = () => {
-      resolve(reader.result as string);
+      const dataUrl = reader.result as string;
+      resolve(dataUrl.slice(dataUrl.indexOf(',') + 1));
     };
     reader.readAsDataURL(blob);
   });

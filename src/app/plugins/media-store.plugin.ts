@@ -19,7 +19,7 @@ export interface MediaStorePlugin {
     limit?: number; 
     offset?: number; 
     mediaType?: 'image' | 'video' | 'all' 
-  }): Promise<{ media: MediaItem[][]; count: number }>;
+  }): Promise<{ media: MediaItem[]; count: number }>;
 
   /**
    * Get thumbnail for a media item
@@ -29,6 +29,9 @@ export interface MediaStorePlugin {
     id: string; 
     type: 'image' | 'video' 
   }): Promise<{ thumbnail: string }>;
+
+  /** Delete selected device media using Android's system confirmation UI. */
+  deleteMedia(options: { items: Array<{ id: string; type: 'image' | 'video' }> }): Promise<{ deleted: boolean }>;
 
   /**
    * Get all albums/folders
@@ -61,6 +64,7 @@ export interface MediaStorePlugin {
 
 export interface MediaItem {
   id: string;
+  key?: string;
   name: string;
   dateTaken: number;
   size: number;
@@ -68,6 +72,7 @@ export interface MediaItem {
   path: string;
   type: 'image' | 'video';
   bucket: string;
+  bucketId?: string;
   width: number;
   height: number;
   duration?: number; // Only for videos
@@ -80,6 +85,43 @@ export interface AlbumInfo {
   type: 'auto' | 'custom';
 }
 
+console.log('🔵 MediaStore Plugin: Registering plugin...');
 const MediaStore = registerPlugin<MediaStorePlugin>('MediaStore');
+console.log('🔵 MediaStore Plugin: Plugin registered:', MediaStore);
 
-export default MediaStore;
+// Add debugging wrapper
+const OriginalMediaStore = MediaStore;
+const DebugMediaStore = {
+  async checkPermissions() {
+    console.log('🔵 MediaStore.checkPermissions() called');
+    try {
+      const result = await OriginalMediaStore.checkPermissions();
+      console.log('🔵 MediaStore.checkPermissions() result:', result);
+      return result;
+    } catch (error) {
+      console.error('🔴 MediaStore.checkPermissions() error:', error);
+      throw error;
+    }
+  },
+  async requestPermissions() {
+    console.log('🔵 MediaStore.requestPermissions() called');
+    try {
+      const result = await OriginalMediaStore.requestPermissions();
+      console.log('🔵 MediaStore.requestPermissions() result:', result);
+      return result;
+    } catch (error) {
+      console.error('🔴 MediaStore.requestPermissions() error:', error);
+      throw error;
+    }
+  },
+  scanMedia: OriginalMediaStore.scanMedia,
+  getThumbnail: OriginalMediaStore.getThumbnail,
+  deleteMedia: (options) => OriginalMediaStore.deleteMedia(options),
+  getAlbums: OriginalMediaStore.getAlbums,
+  startMediaChangeListener: OriginalMediaStore.startMediaChangeListener,
+  stopMediaChangeListener: OriginalMediaStore.stopMediaChangeListener,
+  addListener: OriginalMediaStore.addListener,
+  removeAllListeners: OriginalMediaStore.removeAllListeners,
+} as MediaStorePlugin;
+
+export default DebugMediaStore;

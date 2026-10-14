@@ -11,6 +11,9 @@
         "camera": "Camera is required to take photos",
         "photos": "Photos access is required to select images"
       }
+    },
+    "MediaStore": {
+      "androidGalleryMode": true
     }
   }
 }

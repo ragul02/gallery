@@ -1,80 +1,58 @@
-<ion-content [fullscreen]="true" class="viewer-content" (click)="toggleControls()">
-  <div class="viewer-container" #imageContainer>
-    <!-- Image viewer -->
-    <div class="media-wrapper" *ngIf="currentMedia && currentMedia.type === 'image'">
-      <img 
-        [src]="thumbnailUrl" 
-        [alt]="currentMedia.name"
-        class="media-content"
-      />
-    </div>
-
-    <!-- Video viewer -->
-    <div class="media-wrapper" *ngIf="currentMedia && currentMedia.type === 'video'">
-      <video 
-        [src]="currentMedia.uri" 
-        controls
-        class="media-content"
-        (click)="$event.stopPropagation()"
-      ></video>
-    </div>
-  </div>
-
-  <!-- Controls overlay -->
-  <div class="controls-overlay" *ngIf="showControls">
-    <!-- Header -->
-    <div class="viewer-header">
-      <ion-button fill="clear" (click)="close()">
-        <ion-icon slot="icon-only" name="close"></ion-icon>
+<ion-header class="gallery-header viewer-gallery-header">
+  <ion-toolbar>
+    <ion-buttons slot="start">
+      <ion-button class="toolbar-action" aria-label="Back to gallery" (click)="close()">
+        <ion-icon slot="icon-only" name="arrow-back-outline"></ion-icon>
       </ion-button>
-      <div class="media-info">
-        <h3>{{ currentMedia?.name }}</h3>
-        <p>{{ mediaCounter }}</p>
-      </div>
-      <div class="spacer"></div>
-    </div>
-
-    <!-- Navigation buttons -->
-    <div class="navigation-buttons">
-      <ion-button 
-        fill="clear" 
-        (click)="previousMedia(); $event.stopPropagation()" 
-        [disabled]="!canGoPrevious"
-        class="nav-button nav-previous"
-      >
-        <ion-icon slot="icon-only" name="chevron-back"></ion-icon>
+    </ion-buttons>
+    <div class="brand-mark viewer-brand" slot="start" aria-hidden="true"><ion-icon name="images"></ion-icon></div>
+    <ion-title>
+      <div class="viewer-nav-title">{{ currentPhoto?.name || currentMedia?.name || 'Media' }}<small>{{ mediaCounter }}</small></div>
+    </ion-title>
+    <ion-buttons slot="end">
+      <ion-button class="toolbar-action" aria-label="Media options" (click)="showMediaMenu()">
+        <ion-icon slot="icon-only" name="ellipsis-vertical"></ion-icon>
       </ion-button>
+    </ion-buttons>
+  </ion-toolbar>
+</ion-header>
 
-      <ion-button 
-        fill="clear" 
-        (click)="nextMedia(); $event.stopPropagation()" 
-        [disabled]="!canGoNext"
-        class="nav-button nav-next"
-      >
-        <ion-icon slot="icon-only" name="chevron-forward"></ion-icon>
-      </ion-button>
-    </div>
+<ion-content class="viewer-content">
+  <main class="viewer-stage" (touchstart)="onTouchStart($event)" (touchend)="onTouchEnd($event)">
+    <img
+      *ngIf="currentPhoto"
+      [src]="currentPhoto.webviewPath"
+      [alt]="currentPhoto.name"
+      class="media-content"
+      draggable="false"
+    />
 
-    <!-- Footer with media details -->
-    <div class="viewer-footer" *ngIf="currentMedia">
-      <div class="media-details">
-        <span class="detail-item">
-          <ion-icon name="calendar-outline"></ion-icon>
-          {{ currentMedia.dateTaken | date:'medium' }}
-        </span>
-        <span class="detail-item">
-          <ion-icon name="expand-outline"></ion-icon>
-          {{ currentMedia.width }}x{{ currentMedia.height }}
-        </span>
-        <span class="detail-item" *ngIf="currentMedia.size">
-          <ion-icon name="document-outline"></ion-icon>
-          {{ (currentMedia.size / 1024 / 1024).toFixed(2) }} MB
-        </span>
-        <span class="detail-item" *ngIf="currentMedia.type === 'video' && currentMedia.duration">
-          <ion-icon name="time-outline"></ion-icon>
-          {{ (currentMedia.duration / 1000).toFixed(0) }}s
-        </span>
-      </div>
+    <img
+      *ngIf="currentMedia?.type === 'image'"
+      [src]="mediaSourceUrl"
+      [alt]="currentMedia.name"
+      class="media-content"
+      draggable="false"
+      (error)="onFullImageError()"
+    />
+
+    <video
+      *ngIf="currentMedia?.type === 'video'"
+      [src]="mediaSourceUrl"
+      [poster]="thumbnailUrl || null"
+      class="media-content video-content"
+      controls
+      playsinline
+      webkit-playsinline
+      preload="metadata"
+      (click)="$event.stopPropagation()"
+      (error)="onVideoError()"
+    ></video>
+
+    <div class="playback-error" *ngIf="playbackError">
+      <ion-icon name="alert-circle-outline"></ion-icon>
+      <span>This video could not be opened. The file may be unavailable or use an unsupported format.</span>
     </div>
-  </div>
+  </main>
+
 </ion-content>

@@ -1,0 +1,28 @@
+<ion-header class="settings-header">
+  <ion-toolbar>
+    <ion-buttons slot="start">
+      <ion-button aria-label="Back to gallery" (click)="goHome()"><ion-icon slot="icon-only" name="arrow-back-outline"></ion-icon></ion-button>
+    </ion-buttons>
+    <div class="brand-mark" slot="start" aria-hidden="true"><ion-icon name="images"></ion-icon></div>
+    <ion-title>Gallery dashboard</ion-title>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content class="settings-content">
+  <main class="dashboard">
+    <section class="storage-card">
+      <div class="storage-icon"><ion-icon name="pie-chart-outline"></ion-icon></div>
+      <p>MEDIA STORAGE</p>
+      <h1>{{ storageLabel }}</h1>
+      <span>Combined size of media shown in your gallery</span>
+    </section>
+
+    <h2>Library</h2>
+    <section class="stats-grid">
+      <article class="stat-card"><div class="stat-icon photos"><ion-icon name="image-outline"></ion-icon></div><strong>{{ imageCount }}</strong><span>Images</span></article>
+      <article class="stat-card"><div class="stat-icon videos"><ion-icon name="videocam-outline"></ion-icon></div><strong>{{ videoCount }}</strong><span>Videos</span></article>
+      <article class="stat-card total"><div class="stat-icon all"><ion-icon name="albums-outline"></ion-icon></div><strong>{{ totalCount }}</strong><span>Total items</span></article>
+    </section>
+    <p class="dashboard-note">Storage is calculated from the media files and imported photos available to this gallery.</p>
+  </main>
+</ion-content>

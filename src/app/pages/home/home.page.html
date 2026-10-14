@@ -1,103 +1,98 @@
-<ion-header [translucent]="true">
+<ion-header class="gallery-header">
   <ion-toolbar>
-    <ion-title>Gallery</ion-title>
-    <ion-buttons slot="end">
-      <ion-button (click)="showSortOptions()">
-        <ion-icon slot="icon-only" name="funnel"></ion-icon>
+    <div class="brand-mark" slot="start" aria-hidden="true">
+      <ion-icon name="images"></ion-icon>
+    </div>
+    <ion-title>{{ selectionMode ? selectedMediaKeys.size + ' selected' : 'Gallery' }}</ion-title>
+    <ion-buttons slot="end" *ngIf="!selectionMode">
+      <ion-button class="toolbar-action" aria-label="Filter and sort" (click)="showSortOptions()">
+        <ion-icon slot="icon-only" name="funnel-outline"></ion-icon>
       </ion-button>
-      <ion-button routerLink="/albums">
-        <ion-icon slot="icon-only" name="albums"></ion-icon>
+      <ion-button class="toolbar-action" aria-label="Albums" routerLink="/albums">
+        <ion-icon slot="icon-only" name="albums-outline"></ion-icon>
+      </ion-button>
+      <ion-button class="toolbar-action" aria-label="Gallery dashboard" routerLink="/settings">
+        <ion-icon slot="icon-only" name="settings-outline"></ion-icon>
+      </ion-button>
+    </ion-buttons>
+    <ion-buttons slot="end" *ngIf="selectionMode">
+      <ion-button class="toolbar-action" aria-label="Cancel selection" (click)="cancelSelection()">
+        <ion-icon slot="icon-only" name="close-outline"></ion-icon>
+      </ion-button>
+      <ion-button class="toolbar-action delete-action" aria-label="Delete selected media" (click)="deleteSelectedMedia()">
+        <ion-icon slot="icon-only" name="trash-outline"></ion-icon>
       </ion-button>
     </ion-buttons>
   </ion-toolbar>
 </ion-header>
 
-<ion-content [fullscreen]="true" [scrollEvents]="true" (ionScroll)="onScroll($event)">
-  <ion-header collapse="condense">
-    <ion-toolbar>
-      <ion-title size="large">Gallery</ion-title>
-    </ion-toolbar>
-  </ion-header>
-
-  <!-- Stats header -->
-  <div class="stats-header" *ngIf="hasPermission && totalMediaCount > 0">
-    <div class="stat-item">
-      <ion-icon name="images"></ion-icon>
-      <span>{{ totalMediaCount }} items</span>
+<ion-content class="gallery-content" [scrollEvents]="true" (ionScroll)="onScroll($event)">
+  <main class="gallery-page">
+    <nav class="filter-row" aria-label="Filter gallery" *ngIf="!selectionMode">
+      <button class="filter-chip" [class.active]="currentFilter === MediaFilterType.ALL" (click)="selectFilter(MediaFilterType.ALL)">
+        <ion-icon name="grid-outline"></ion-icon><span>All</span>
+      </button>
+      <button class="filter-chip" [class.active]="currentFilter === MediaFilterType.IMAGES" (click)="selectFilter(MediaFilterType.IMAGES)">
+        <ion-icon name="image-outline"></ion-icon><span>Images</span>
+      </button>
+      <button class="filter-chip" [class.active]="currentFilter === MediaFilterType.VIDEOS" (click)="selectFilter(MediaFilterType.VIDEOS)">
+        <ion-icon name="videocam-outline"></ion-icon><span>Videos</span>
+      </button>
+    </nav>
+    <div class="gallery-summary" *ngIf="hasPermission && !selectionMode">
+      <span><strong>{{ totalMediaCount }}</strong> {{ totalMediaCount === 1 ? 'item' : 'items' }}</span>
+      <span class="summary-divider" *ngIf="imageCount > 0 && videoCount > 0"></span>
+      <span *ngIf="imageCount > 0"><ion-icon name="image-outline"></ion-icon>{{ imageCount }}</span>
+      <span *ngIf="videoCount > 0"><ion-icon name="videocam-outline"></ion-icon>{{ videoCount }}</span>
     </div>
-    <div class="stat-item" *ngIf="imageCount > 0">
-      <ion-icon name="image"></ion-icon>
-      <span>{{ imageCount }} photos</span>
-    </div>
-    <div class="stat-item" *ngIf="videoCount > 0">
-      <ion-icon name="videocam"></ion-icon>
-      <span>{{ videoCount }} videos</span>
-    </div>
-  </div>
 
-  <!-- Loading indicator -->
-  <div class="loading-container" *ngIf="isLoading">
-    <ion-spinner></ion-spinner>
-    <p>Loading media...</p>
-  </div>
+    <div class="loading-state" *ngIf="isLoading">
+      <ion-spinner name="crescent"></ion-spinner>
+      <span>Loading your gallery…</span>
+    </div>
 
-  <!-- Media grid with virtual scrolling -->
-  <div class="photo-grid" *ngIf="!isLoading && hasPermission && displayedMedia.length > 0">
-    <div 
-      class="media-card" 
-      *ngFor="let media of displayedMedia; trackBy: trackByMediaId"
-      (click)="openMediaViewer(media)"
-    >
-      <div class="media-thumbnail">
-        <img 
-          *ngIf="media.thumbnailUrl" 
-          [src]="media.thumbnailUrl" 
-          [alt]="media.name"
-          loading="lazy"
-        />
-        <div class="thumbnail-placeholder" *ngIf="!media.thumbnailUrl">
-          <ion-spinner></ion-spinner>
-        </div>
-        
-        <!-- Video indicator -->
-        <div class="video-indicator" *ngIf="media.type === 'video'">
-          <ion-icon name="play-circle"></ion-icon>
+    <section class="media-grid" *ngIf="!isLoading && hasPermission && displayedMedia.length > 0" aria-label="Photos and videos">
+      <button class="media-card" *ngFor="let media of displayedMedia; trackBy: trackByMediaId" (pointerdown)="startMediaLongPress(media)" (pointerup)="cancelMediaLongPress()" (pointerleave)="cancelMediaLongPress()" (pointercancel)="cancelMediaLongPress()" (contextmenu)="onMediaContextMenu($event, media)" (click)="onMediaCardClick(media)" [class.selected]="selectedMediaKeys.has(media.type + ':' + media.id)" [attr.aria-label]="media.type === 'video' ? 'Open video' : 'Open photo'">
+        <img *ngIf="media.thumbnailUrl" [src]="media.thumbnailUrl" [alt]="media.name" loading="lazy" />
+        <span class="thumbnail-placeholder" *ngIf="!media.thumbnailUrl"><ion-spinner name="crescent"></ion-spinner></span>
+        <span class="selection-check" *ngIf="selectionMode">
+          <ion-icon [name]="selectedMediaKeys.has(media.type + ':' + media.id) ? 'checkmark-circle' : 'ellipse-outline'"></ion-icon>
+        </span>
+        <span class="video-indicator" *ngIf="media.type === 'video'">
+          <ion-icon name="play"></ion-icon>
           <span *ngIf="media.duration">{{ (media.duration / 1000).toFixed(0) }}s</span>
-        </div>
-      </div>
-      
-      <div class="media-info">
-        <p class="media-date">{{ media.dateTaken | date:'short' }}</p>
-      </div>
-    </div>
-  </div>
+        </span>
+      </button>
+    </section>
 
-  <!-- Legacy photo grid (fallback) -->
-  <div class="photo-grid" *ngIf="!hasPermission && photos.length > 0">
-    <ion-card *ngFor="let photo of photos">
-      <img [src]="photo.webviewPath" />
-      <ion-card-content>
-        <p class="photo-date">{{ photo.dateTaken | date:'short' }}</p>
-      </ion-card-content>
-    </ion-card>
-  </div>
+    <section class="media-grid local-grid" *ngIf="photos.length > 0 && currentFilter !== MediaFilterType.VIDEOS" aria-label="Photos saved in this app">
+      <button class="media-card" *ngFor="let photo of photos" (click)="openPhotoViewer(photo)" aria-label="Open saved photo">
+        <img [src]="photo.webviewPath" [alt]="photo.name" loading="lazy" />
+      </button>
+    </section>
 
-  <!-- Empty state -->
-  <div class="empty-state" *ngIf="!isLoading && (!hasPermission && photos.length === 0) || (hasPermission && displayedMedia.length === 0)">
-    <ion-icon name="images-outline"></ion-icon>
-    <h2>No Media Found</h2>
-    <p *ngIf="!hasPermission">Grant permissions to scan your device for photos and videos.</p>
-    <p *ngIf="hasPermission">Your device doesn't have any photos or videos yet.</p>
-    <ion-button (click)="scanDeviceMedia()" *ngIf="hasPermission">
-      <ion-icon slot="start" name="refresh"></ion-icon>
-      Rescan Device
-    </ion-button>
-  </div>
+    <section class="empty-card" *ngIf="!isLoading && !hasPermission">
+      <div class="empty-icon"><ion-icon name="images-outline"></ion-icon></div>
+      <h2>Your photos, all in one place</h2>
+      <p>Allow access to your photos and videos to see your gallery.</p>
+      <ion-button shape="round" (click)="scanDeviceMedia()">
+        <ion-icon slot="start" name="lock-open-outline"></ion-icon>Allow access
+      </ion-button>
+    </section>
 
-  <ion-fab vertical="bottom" horizontal="end" slot="fixed">
-    <ion-fab-button (click)="addPhotoToGallery()">
+    <section class="empty-card" *ngIf="!isLoading && hasPermission && displayedMedia.length === 0 && photos.length === 0">
+      <div class="empty-icon"><ion-icon name="images-outline"></ion-icon></div>
+      <h2>No photos yet</h2>
+      <p>Your device gallery is empty. Add a photo or scan again.</p>
+      <ion-button fill="outline" shape="round" (click)="scanDeviceMedia()">
+        <ion-icon slot="start" name="refresh-outline"></ion-icon>Scan again
+      </ion-button>
+    </section>
+  </main>
+
+  <ion-fab vertical="bottom" horizontal="end" slot="fixed" *ngIf="!selectionMode">
+    <ion-fab-button class="add-fab" aria-label="Add a photo" (click)="addPhotoToGallery()">
       <ion-icon name="add"></ion-icon>
     </ion-fab-button>
   </ion-fab>
 </ion-content>
-
