@@ -432,4 +432,8 @@ export class MediaService {
   getVideoCount(): number {
     return this.mediaItems.filter(item => item.type === 'video').length;
   }
+
+  getTotalSize(): number {
+    return this.mediaItems.reduce((total, item) => total + (Number(item.size) || 0), 0);
+  }
 }

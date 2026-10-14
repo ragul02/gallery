@@ -22,6 +22,10 @@ const routes: Routes = [
   {
     path: 'viewer/:id',
     loadChildren: () => import('./pages/viewer/viewer.module').then(m => m.ViewerPageModule)
+  },
+  {
+    path: 'settings',
+    loadChildren: () => import('./pages/settings/settings.module').then(m => m.SettingsPageModule)
   }
 ];
 

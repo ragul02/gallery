@@ -11,6 +11,9 @@
       <ion-button class="toolbar-action" aria-label="Albums" routerLink="/albums">
         <ion-icon slot="icon-only" name="albums-outline"></ion-icon>
       </ion-button>
+      <ion-button class="toolbar-action" aria-label="Gallery dashboard" routerLink="/settings">
+        <ion-icon slot="icon-only" name="settings-outline"></ion-icon>
+      </ion-button>
     </ion-buttons>
     <ion-buttons slot="end" *ngIf="selectionMode">
       <ion-button class="toolbar-action" aria-label="Cancel selection" (click)="cancelSelection()">
@@ -25,6 +28,17 @@
 
 <ion-content class="gallery-content" [scrollEvents]="true" (ionScroll)="onScroll($event)">
   <main class="gallery-page">
+    <nav class="filter-row" aria-label="Filter gallery" *ngIf="!selectionMode">
+      <button class="filter-chip" [class.active]="currentFilter === MediaFilterType.ALL" (click)="selectFilter(MediaFilterType.ALL)">
+        <ion-icon name="grid-outline"></ion-icon><span>All</span>
+      </button>
+      <button class="filter-chip" [class.active]="currentFilter === MediaFilterType.IMAGES" (click)="selectFilter(MediaFilterType.IMAGES)">
+        <ion-icon name="image-outline"></ion-icon><span>Images</span>
+      </button>
+      <button class="filter-chip" [class.active]="currentFilter === MediaFilterType.VIDEOS" (click)="selectFilter(MediaFilterType.VIDEOS)">
+        <ion-icon name="videocam-outline"></ion-icon><span>Videos</span>
+      </button>
+    </nav>
     <div class="gallery-summary" *ngIf="hasPermission && !selectionMode">
       <span><strong>{{ totalMediaCount }}</strong> {{ totalMediaCount === 1 ? 'item' : 'items' }}</span>
       <span class="summary-divider" *ngIf="imageCount > 0 && videoCount > 0"></span>
@@ -51,7 +65,7 @@
       </button>
     </section>
 
-    <section class="media-grid local-grid" *ngIf="photos.length > 0" aria-label="Photos saved in this app">
+    <section class="media-grid local-grid" *ngIf="photos.length > 0 && currentFilter !== MediaFilterType.VIDEOS" aria-label="Photos saved in this app">
       <button class="media-card" *ngFor="let photo of photos" (click)="openPhotoViewer(photo)" aria-label="Open saved photo">
         <img [src]="photo.webviewPath" [alt]="photo.name" loading="lazy" />
       </button>

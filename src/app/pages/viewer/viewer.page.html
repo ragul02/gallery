@@ -1,4 +1,23 @@
-<ion-content [fullscreen]="true" class="viewer-content" (click)="onStageClick()">
+<ion-header class="gallery-header viewer-gallery-header">
+  <ion-toolbar>
+    <ion-buttons slot="start">
+      <ion-button class="toolbar-action" aria-label="Back to gallery" (click)="close()">
+        <ion-icon slot="icon-only" name="arrow-back-outline"></ion-icon>
+      </ion-button>
+    </ion-buttons>
+    <div class="brand-mark viewer-brand" slot="start" aria-hidden="true"><ion-icon name="images"></ion-icon></div>
+    <ion-title>
+      <div class="viewer-nav-title">{{ currentPhoto?.name || currentMedia?.name || 'Media' }}<small>{{ mediaCounter }}</small></div>
+    </ion-title>
+    <ion-buttons slot="end">
+      <ion-button class="toolbar-action" aria-label="Media options" (click)="showMediaMenu()">
+        <ion-icon slot="icon-only" name="ellipsis-vertical"></ion-icon>
+      </ion-button>
+    </ion-buttons>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content class="viewer-content">
   <main class="viewer-stage" (touchstart)="onTouchStart($event)" (touchend)="onTouchEnd($event)">
     <img
       *ngIf="currentPhoto"
@@ -36,21 +55,4 @@
     </div>
   </main>
 
-  <div class="viewer-chrome" [class.controls-hidden]="!showControls">
-    <header class="viewer-topbar">
-      <button class="chrome-button close-button" aria-label="Back to gallery" (click)="close(); $event.stopPropagation()">
-        <ion-icon name="arrow-back"></ion-icon>
-      </button>
-      <div class="topbar-title">
-        <h1>{{ currentPhoto?.name || currentMedia?.name || 'Media' }}</h1>
-      <span>{{ mediaCounter }}</span>
-      </div>
-      <span class="media-type-badge" *ngIf="currentMedia?.type === 'video'">
-        <ion-icon name="videocam-outline"></ion-icon> VIDEO
-      </span>
-      <button class="chrome-button menu-button" aria-label="Media options" (click)="showMediaMenu(); $event.stopPropagation()">
-        <ion-icon name="ellipsis-vertical"></ion-icon>
-      </button>
-    </header>
-  </div>
 </ion-content>

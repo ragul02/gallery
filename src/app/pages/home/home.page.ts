@@ -68,7 +68,7 @@ export class HomePage implements OnInit, OnDestroy {
     } else {
       this.loadLegacyPhotos();
       if (this.hasPermission && this.mediaItems.length > 0) {
-        this.loadNextBatch();
+        await this.refreshMedia();
       }
     }
   }

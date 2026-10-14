@@ -22,7 +22,6 @@ export class ViewerPage implements OnInit {
   thumbnailUrl = '';
   mediaSourceUrl = '';
   imageLoadFailed = false;
-  showControls = true;
   playbackError = false;
   private touchStartX = 0;
   private touchStartY = 0;
@@ -133,11 +132,6 @@ export class ViewerPage implements OnInit {
     setTimeout(() => this.suppressClickAfterSwipe = false, 350);
   }
 
-  onStageClick() {
-    if (this.suppressClickAfterSwipe) return;
-    this.toggleControls();
-  }
-
   onVideoError() {
     this.playbackError = true;
   }
@@ -145,10 +139,6 @@ export class ViewerPage implements OnInit {
   onFullImageError() {
     this.imageLoadFailed = true;
     if (this.thumbnailUrl) this.mediaSourceUrl = this.thumbnailUrl;
-  }
-
-  toggleControls() {
-    this.showControls = !this.showControls;
   }
 
   async nextMedia() {
