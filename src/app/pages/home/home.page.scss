@@ -39,6 +39,8 @@
 
   .media-card {
     position: relative;
+    content-visibility: auto;
+    contain-intrinsic-size: 150px 150px;
     cursor: pointer;
     overflow: hidden;
     border-radius: 4px;

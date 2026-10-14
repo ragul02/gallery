@@ -31,7 +31,7 @@ export class HomePage implements OnInit, OnDestroy {
   currentBatch = 0;
   
   // Thumbnail loading queue
-  private thumbnailQueue: string[] = [];
+  private thumbnailQueue: MediaItemView[] = [];
   private loadingThumbnails = false;
 
   constructor(
@@ -208,7 +208,7 @@ export class HomePage implements OnInit, OnDestroy {
       // Queue thumbnails for loading
       newItems.forEach(item => {
         if (!this.thumbnails.has(item.id)) {
-          this.thumbnailQueue.push(item.id);
+          this.thumbnailQueue.push(item);
         }
       });
       
@@ -224,14 +224,14 @@ export class HomePage implements OnInit, OnDestroy {
     this.loadingThumbnails = true;
 
     // Load thumbnails in small batches to avoid overwhelming the system
-    const batchSize = 5;
+    const batchSize = 8;
     while (this.thumbnailQueue.length > 0) {
       const batch = this.thumbnailQueue.splice(0, batchSize);
       
       await Promise.all(
-        batch.map(async (mediaId) => {
-          const media = this.displayedMedia.find(m => m.id === mediaId);
-          if (media && !this.thumbnails.has(mediaId)) {
+        batch.map(async (media) => {
+          const mediaId = media.id;
+          if (!this.thumbnails.has(mediaId)) {
             try {
               const thumbnail = await this.mediaService.getThumbnail(mediaId, media.type);
               this.thumbnails.set(mediaId, thumbnail);
@@ -243,8 +243,6 @@ export class HomePage implements OnInit, OnDestroy {
         })
       );
 
-      // Small delay between batches
-      await new Promise(resolve => setTimeout(resolve, 100));
     }
 
     this.loadingThumbnails = false;

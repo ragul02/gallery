@@ -2,12 +2,6 @@ import { Injectable } from '@angular/core';
 import { Preferences } from '@capacitor/preferences';
 import MediaStore, { MediaItem, AlbumInfo } from '../plugins/media-store.plugin';
 
-export interface CachedThumbnail {
-  id: string;
-  thumbnail: string;
-  timestamp: number;
-}
-
 export interface MediaFilter {
   type?: 'image' | 'video' | 'all';
   album?: string;
@@ -34,7 +28,6 @@ export class MediaService {
   private mediaChangeListenerActive = false;
 
   private readonly CACHE_KEY = 'media_cache';
-  private readonly THUMBNAIL_CACHE_KEY = 'thumbnail_cache';
   private readonly PERMISSION_KEY = 'has_media_permission';
   private readonly INITIAL_SCAN_KEY = 'initial_media_scan_done';
 
@@ -272,8 +265,6 @@ export class MediaService {
 
       // Cache the thumbnail
       this.thumbnailCache.set(mediaId, result.thumbnail);
-      await this.cacheThumbnail(mediaId, result.thumbnail);
-
       return result.thumbnail;
     } catch (error) {
       console.error('Error getting thumbnail:', error);
@@ -399,63 +390,12 @@ export class MediaService {
   }
 
   /**
-   * Cache a single thumbnail
-   */
-  private async cacheThumbnail(id: string, thumbnail: string) {
-    try {
-      const cacheEntry: CachedThumbnail = {
-        id,
-        thumbnail,
-        timestamp: Date.now()
-      };
-
-      // Store in preferences (limited by size, so we only cache recent ones)
-      const existingCache = await this.loadThumbnailCache();
-      existingCache.set(id, cacheEntry);
-
-      // Keep only last 100 thumbnails
-      if (existingCache.size > 100) {
-        const entries = Array.from(existingCache.entries());
-        entries.sort((a, b) => b[1].timestamp - a[1].timestamp);
-        existingCache.clear();
-        entries.slice(0, 100).forEach(([key, value]) => {
-          existingCache.set(key, value);
-        });
-      }
-
-      await Preferences.set({
-        key: this.THUMBNAIL_CACHE_KEY,
-        value: JSON.stringify(Array.from(existingCache.entries()))
-      });
-    } catch (error) {
-      console.error('Error caching thumbnail:', error);
-    }
-  }
-
-  /**
-   * Load thumbnail cache
-   */
-  private async loadThumbnailCache(): Promise<Map<string, CachedThumbnail>> {
-    try {
-      const result = await Preferences.get({ key: this.THUMBNAIL_CACHE_KEY });
-      if (result.value) {
-        const entries = JSON.parse(result.value);
-        return new Map(entries);
-      }
-    } catch (error) {
-      console.error('Error loading thumbnail cache:', error);
-    }
-    return new Map();
-  }
-
-  /**
    * Clear all cached data
    */
   async clearCache() {
     this.mediaItems = [];
     this.thumbnailCache.clear();
     await Preferences.remove({ key: this.CACHE_KEY });
-    await Preferences.remove({ key: this.THUMBNAIL_CACHE_KEY });
   }
 
   /**

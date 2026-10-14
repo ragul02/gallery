@@ -5,7 +5,6 @@ import android.content.ContentResolver;
 import android.database.Cursor;
 import android.database.ContentObserver;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
@@ -24,7 +23,6 @@ import com.getcapacitor.annotation.PermissionCallback;
 import com.getcapacitor.annotation.Permission;
 
 import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -190,13 +188,16 @@ public class MediaStorePlugin extends Plugin {
             Uri uri = Uri.withAppendedPath(base, id);
             Bitmap bitmap;
             if (Build.VERSION.SDK_INT >= 29) {
-                bitmap = getContext().getContentResolver().loadThumbnail(uri, new Size(512, 512), null);
+                bitmap = getContext().getContentResolver().loadThumbnail(uri, new Size(256, 256), null);
             } else {
-                try (InputStream in = getContext().getContentResolver().openInputStream(uri)) { bitmap = BitmapFactory.decodeStream(in); }
+                long mediaId = Long.parseLong(id);
+                bitmap = "video".equals(type)
+                    ? MediaStore.Video.Thumbnails.getThumbnail(getContext().getContentResolver(), mediaId, MediaStore.Video.Thumbnails.MINI_KIND, null)
+                    : MediaStore.Images.Thumbnails.getThumbnail(getContext().getContentResolver(), mediaId, MediaStore.Images.Thumbnails.MINI_KIND, null);
             }
             if (bitmap == null) throw new IllegalStateException("Thumbnail unavailable");
             ByteArrayOutputStream stream = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 82, stream);
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 72, stream);
             JSObject result = new JSObject();
             result.put("thumbnail", "data:image/jpeg;base64," + Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP));
             call.resolve(result);
