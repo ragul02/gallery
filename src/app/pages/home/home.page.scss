@@ -21,24 +21,24 @@
 
   .brand-mark {
     display: grid;
-    width: 34px;
-    height: 34px;
+    width: 38px;
+    height: 38px;
     place-items: center;
     border-radius: 12px;
     color: #fff;
     background: linear-gradient(145deg, #8376ff, #584bd7);
     box-shadow: 0 5px 12px rgba(101, 88, 232, 0.22);
 
-    ion-icon { font-size: 19px; }
+    ion-icon { font-size: 22px; }
   }
 
   .toolbar-action {
     --color: #555969;
     --border-radius: 13px;
-    width: 38px;
-    height: 38px;
+    width: 42px;
+    height: 42px;
     margin-inline: 2px;
-    font-size: 20px;
+    font-size: 24px;
   }
 
   .delete-action { --color: #d64a5a; }
@@ -65,7 +65,7 @@
   font-weight: 600;
 
   strong { color: var(--gallery-ink); font-weight: 750; }
-  ion-icon { margin-right: 4px; vertical-align: -2px; font-size: 14px; }
+  ion-icon { margin-right: 4px; vertical-align: -2px; font-size: 17px; }
   .summary-divider { width: 1px; height: 15px; background: #dedee7; }
 }
 
@@ -89,7 +89,7 @@
     font-weight: 650;
     transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
 
-    ion-icon { font-size: 15px; }
+    ion-icon { font-size: 18px; }
     &.active { border-color: #6558e8; color: #fff; background: #6558e8; }
   }
 }
@@ -159,7 +159,7 @@
     font-weight: 700;
     backdrop-filter: blur(8px);
 
-    ion-icon { font-size: 11px; }
+    ion-icon { font-size: 14px; }
   }
 
   .selection-check {
@@ -167,13 +167,13 @@
     top: 7px;
     left: 7px;
     display: grid;
-    width: 23px;
-    height: 23px;
+    width: 26px;
+    height: 26px;
     place-items: center;
     border-radius: 50%;
     color: #fff;
     background: rgba(24, 24, 32, 0.55);
-    font-size: 22px;
+    font-size: 25px;
 
     ion-icon { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25)); }
   }
@@ -207,13 +207,13 @@
 
   .empty-icon {
     display: grid;
-    width: 62px;
-    height: 62px;
+    width: 68px;
+    height: 68px;
     place-items: center;
     border-radius: 21px;
     color: var(--gallery-accent);
     background: #f0efff;
-    font-size: 29px;
+    font-size: 34px;
   }
 
   h2 {

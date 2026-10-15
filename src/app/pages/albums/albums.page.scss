@@ -108,7 +108,7 @@
     }
 
     .album-info {
-      padding: 12px;
+      padding: 12px 42px 12px 12px;
 
       h3 {
         margin: 0 0 4px;
@@ -125,6 +125,21 @@
         font-size: 12px;
         color: var(--ion-color-medium);
       }
+    }
+
+    .album-delete {
+      position: absolute;
+      right: 7px;
+      bottom: 10px;
+      display: grid;
+      width: 32px;
+      height: 32px;
+      place-items: center;
+      border: 0;
+      border-radius: 50%;
+      color: var(--ion-color-medium);
+      background: var(--ion-color-light-shade);
+      font-size: 19px;
     }
   }
 

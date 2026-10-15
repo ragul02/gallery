@@ -5,6 +5,7 @@ import { PhotoService } from '../../services/photo.service';
 import { MediaService, MediaSortType, MediaFilter } from '../../services/media.service';
 import { Photo, SortType, MediaItemView, MediaFilterType } from '../../models/gallery.model';
 import { MediaItem } from '../../plugins/media-store.plugin';
+import { SystemBarsService } from '../../services/system-bars.service';
 
 @Component({
   selector: 'app-home',
@@ -13,6 +14,7 @@ import { MediaItem } from '../../plugins/media-store.plugin';
   standalone: false
 })
 export class HomePage implements OnInit, OnDestroy {
+  private unsubscribeMediaUpdates?: () => void;
   // Legacy photos from PhotoService
   photos: Photo[] = [];
   
@@ -23,6 +25,8 @@ export class HomePage implements OnInit, OnDestroy {
   
   currentSort: MediaSortType = MediaSortType.DATE_DESC;
   currentFilter: MediaFilterType = MediaFilterType.ALL;
+  activeAlbumName = '';
+  activeAlbumId = '';
   readonly MediaFilterType = MediaFilterType;
   sortTypes = SortType;
   
@@ -45,29 +49,38 @@ export class HomePage implements OnInit, OnDestroy {
     public actionSheetController: ActionSheetController,
     private alertController: AlertController,
     private loadingController: LoadingController,
-    private router: Router
+    public router: Router,
+    private systemBars: SystemBarsService
   ) {}
 
   async ngOnInit() {
     console.log('🔵 HomePage: ngOnInit called');
+    this.unsubscribeMediaUpdates = this.mediaService.subscribeMediaUpdated(() => { void this.refreshMedia(); });
     await this.initializeGallery();
   }
 
   ngOnDestroy() {
-    // Cleanup if needed
+    this.unsubscribeMediaUpdates?.();
   }
 
   async ionViewWillEnter() {
+    await this.systemBars.setHidden(true);
     await this.photoService.whenReady();
 
     // Check for album filter from query params
     const albumFilter = this.router.routerState.snapshot.root.queryParams['album'];
     if (albumFilter) {
+      this.activeAlbumName = albumFilter;
+      this.activeAlbumId = this.router.routerState.snapshot.root.queryParams['albumId'] || '';
       this.currentFilter = MediaFilterType.ALL;
-      await this.loadMediaFromStore(albumFilter);
+      await this.mediaService.refreshRecentMedia(false);
+      await this.loadMediaFromStore(albumFilter, this.activeAlbumId);
     } else {
+      this.activeAlbumName = '';
+      this.activeAlbumId = '';
       this.loadLegacyPhotos();
-      if (this.hasPermission && this.mediaItems.length > 0) {
+      if (this.hasPermission) {
+        await this.mediaService.refreshRecentMedia(false);
         await this.refreshMedia();
       }
     }
@@ -97,7 +110,7 @@ export class HomePage implements OnInit, OnDestroy {
     await this.scanDeviceMedia(false, !hasScanned);
   }
 
-  async scanDeviceMedia(showPermissionMessage = true, forceRefresh = true) {
+  async scanDeviceMedia(showPermissionMessage = true, forceRefresh = false) {
     console.log('🔵 HomePage: scanDeviceMedia - START', { showPermissionMessage, forceRefresh });
     console.log('🔵 HomePage: About to call mediaService.requestPermissions()');
     
@@ -132,13 +145,8 @@ export class HomePage implements OnInit, OnDestroy {
 
     try {
       console.log('🔵 HomePage: Starting media scan...');
-      await this.mediaService.scanAllMedia({
-        forceRefresh,
-        progressCallback: (loaded) => {
-          console.log('🔵 HomePage: Scan progress:', loaded, 'files');
-          loading.message = `Found ${loaded} media files...`;
-        }
-      });
+      await this.mediaService.scanAllMedia({ forceRefresh });
+      if (!forceRefresh) await this.mediaService.refreshRecentMedia(false);
 
       await loading.dismiss();
       console.log('🟢 HomePage: Media scan completed successfully');
@@ -162,13 +170,17 @@ export class HomePage implements OnInit, OnDestroy {
     }
   }
 
-  async loadMediaFromStore(albumName?: string) {
+  async loadMediaFromStore(albumName?: string, albumId?: string) {
     this.isLoading = true;
+    this.displayedMedia = [];
+    this.currentBatch = 0;
+    this.thumbnailQueue = [];
 
     try {
       const filter: MediaFilter = {
         type: this.currentFilter === MediaFilterType.ALL ? undefined : this.currentFilter,
-        album: albumName
+        album: albumName,
+        albumId
       };
 
       const allMedia = this.mediaService.getMedia(filter, this.currentSort);
@@ -371,7 +383,7 @@ export class HomePage implements OnInit, OnDestroy {
           }
         },
         {
-          text: 'Scan Device Media',
+          text: 'Refresh media',
           icon: 'refresh',
           handler: async () => {
             await this.scanDeviceMedia();
@@ -461,7 +473,8 @@ export class HomePage implements OnInit, OnDestroy {
     this.displayedMedia = [];
     this.currentBatch = 0;
     this.thumbnailQueue = [];
-    await this.loadMediaFromStore();
+    const query = this.router.routerState.snapshot.root.queryParams;
+    await this.loadMediaFromStore(query['album'], query['albumId']);
   }
 
   async selectFilter(filter: MediaFilterType) {
@@ -471,15 +484,25 @@ export class HomePage implements OnInit, OnDestroy {
   }
 
   get totalMediaCount(): number {
-    return this.hasPermission ? this.mediaService.getTotalCount() : this.photos.length;
+    return this.activeAlbumId || this.activeAlbumName
+      ? this.mediaItems.length
+      : this.hasPermission ? this.mediaService.getTotalCount() : this.photos.length;
+  }
+
+  get isAlbumView(): boolean {
+    return Boolean(this.activeAlbumId || this.activeAlbumName);
   }
 
   get imageCount(): number {
-    return this.hasPermission ? this.mediaService.getImageCount() : this.photos.length;
+    return this.activeAlbumId || this.activeAlbumName
+      ? this.mediaItems.filter(item => item.type === 'image').length
+      : this.hasPermission ? this.mediaService.getImageCount() : this.photos.length;
   }
 
   get videoCount(): number {
-    return this.hasPermission ? this.mediaService.getVideoCount() : 0;
+    return this.activeAlbumId || this.activeAlbumName
+      ? this.mediaItems.filter(item => item.type === 'video').length
+      : this.hasPermission ? this.mediaService.getVideoCount() : 0;
   }
 
   trackByMediaId(index: number, media: MediaItemView): string {

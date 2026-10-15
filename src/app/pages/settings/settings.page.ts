@@ -18,6 +18,8 @@ export class SettingsPage {
 
   async ionViewWillEnter() {
     await this.photoService.whenReady();
+    await this.mediaService.scanAllMedia({ forceRefresh: false });
+    await this.mediaService.refreshRecentMedia(false);
     const photos = this.photoService.getPhotos();
     this.imageCount = this.mediaService.getImageCount() + photos.length;
     this.videoCount = this.mediaService.getVideoCount();

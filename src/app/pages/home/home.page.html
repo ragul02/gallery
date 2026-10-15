@@ -3,7 +3,7 @@
     <div class="brand-mark" slot="start" aria-hidden="true">
       <ion-icon name="images"></ion-icon>
     </div>
-    <ion-title>{{ selectionMode ? selectedMediaKeys.size + ' selected' : 'Gallery' }}</ion-title>
+    <ion-title>{{ selectionMode ? selectedMediaKeys.size + ' selected' : (isAlbumView ? activeAlbumName : 'Gallery') }}</ion-title>
     <ion-buttons slot="end" *ngIf="!selectionMode">
       <ion-button class="toolbar-action" aria-label="Filter and sort" (click)="showSortOptions()">
         <ion-icon slot="icon-only" name="funnel-outline"></ion-icon>
@@ -65,7 +65,7 @@
       </button>
     </section>
 
-    <section class="media-grid local-grid" *ngIf="photos.length > 0 && currentFilter !== MediaFilterType.VIDEOS" aria-label="Photos saved in this app">
+    <section class="media-grid local-grid" *ngIf="photos.length > 0 && currentFilter !== MediaFilterType.VIDEOS && !isAlbumView" aria-label="Photos saved in this app">
       <button class="media-card" *ngFor="let photo of photos" (click)="openPhotoViewer(photo)" aria-label="Open saved photo">
         <img [src]="photo.webviewPath" [alt]="photo.name" loading="lazy" />
       </button>
@@ -80,12 +80,12 @@
       </ion-button>
     </section>
 
-    <section class="empty-card" *ngIf="!isLoading && hasPermission && displayedMedia.length === 0 && photos.length === 0">
+    <section class="empty-card" *ngIf="!isLoading && hasPermission && displayedMedia.length === 0 && (isAlbumView || photos.length === 0)">
       <div class="empty-icon"><ion-icon name="images-outline"></ion-icon></div>
-      <h2>No photos yet</h2>
-      <p>Your device gallery is empty. Add a photo or scan again.</p>
-      <ion-button fill="outline" shape="round" (click)="scanDeviceMedia()">
-        <ion-icon slot="start" name="refresh-outline"></ion-icon>Scan again
+      <h2>{{ isAlbumView ? 'No media in this album' : 'No photos yet' }}</h2>
+      <p>{{ isAlbumView ? 'This folder does not contain any accessible media.' : 'Your device gallery is empty. Add a photo or refresh the media list.' }}</p>
+      <ion-button *ngIf="!isAlbumView" fill="outline" shape="round" (click)="scanDeviceMedia()">
+        <ion-icon slot="start" name="refresh-outline"></ion-icon>Refresh media
       </ion-button>
     </section>
   </main>

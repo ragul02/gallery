@@ -1,10 +1,9 @@
 import { Component, OnInit } from '@angular/core';
 import { Router } from '@angular/router';
-import { AlertController, ActionSheetController, LoadingController } from '@ionic/angular';
+import { AlertController } from '@ionic/angular';
 import { PhotoService } from '../../services/photo.service';
 import { MediaService } from '../../services/media.service';
 import { Album, AlbumView } from '../../models/gallery.model';
-import { AlbumInfo, MediaItem } from '../../plugins/media-store.plugin';
 
 @Component({
   selector: 'app-albums',
@@ -30,8 +29,6 @@ export class AlbumsPage implements OnInit {
     private photoService: PhotoService,
     private mediaService: MediaService,
     private alertController: AlertController,
-    private actionSheetController: ActionSheetController,
-    private loadingController: LoadingController,
     private router: Router
   ) {}
 
@@ -40,11 +37,16 @@ export class AlbumsPage implements OnInit {
   }
 
   async ionViewWillEnter() {
+    if (this.hasPermission) {
+      await this.mediaService.scanAllMedia({ forceRefresh: false });
+      await this.mediaService.refreshRecentMedia(false);
+    }
     await this.loadAlbums();
   }
 
   async initialize() {
     this.hasPermission = await this.mediaService.checkPermissions();
+    if (this.hasPermission) await this.mediaService.scanAllMedia({ forceRefresh: false });
     await this.loadAlbums();
   }
 
@@ -62,7 +64,7 @@ export class AlbumsPage implements OnInit {
         // Convert to view models
         this.autoAlbums = await Promise.all(
           albums.map(async (album) => {
-            const cover = this.mediaService.getAlbumCover(album.name);
+            const cover = this.mediaService.getAlbumCover(album.name, album.id);
             let coverThumbnail: string | undefined;
             
             if (cover) {
@@ -150,48 +152,11 @@ export class AlbumsPage implements OnInit {
     await alert.present();
   }
 
-  async showAlbumActions(album: AlbumView) {
-    const buttons: any[] = [
-      {
-        text: 'Open',
-        icon: 'open',
-        handler: () => {
-          this.openAlbum(album);
-        }
-      }
-    ];
-
-    // Only allow deletion of custom albums
-    if (album.type === 'custom') {
-      buttons.push({
-        text: 'Delete',
-        role: 'destructive',
-        icon: 'trash',
-        handler: () => {
-          this.deleteAlbum(album);
-        }
-      });
-    }
-
-    buttons.push({
-      text: 'Cancel',
-      icon: 'close',
-      role: 'cancel'
-    });
-
-    const actionSheet = await this.actionSheetController.create({
-      header: album.name,
-      subHeader: album.type === 'auto' ? 'Auto-detected folder' : 'Custom album',
-      buttons
-    });
-    await actionSheet.present();
-  }
-
   openAlbum(album: AlbumView) {
     if (album.type === 'auto') {
       // Navigate to home with filter
       this.router.navigate(['/home'], {
-        queryParams: { album: album.name }
+        queryParams: { album: album.name, albumId: album.id }
       });
     } else {
       // Navigate to custom album detail

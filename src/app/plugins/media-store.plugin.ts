@@ -18,7 +18,9 @@ export interface MediaStorePlugin {
   scanMedia(options?: { 
     limit?: number; 
     offset?: number; 
-    mediaType?: 'image' | 'video' | 'all' 
+    mediaType?: 'image' | 'video' | 'all';
+    addedAfter?: number;
+    mediaId?: string;
   }): Promise<{ media: MediaItem[]; count: number }>;
 
   /**
@@ -53,7 +55,7 @@ export interface MediaStorePlugin {
    */
   addListener(
     eventName: 'mediaChanged',
-    listenerFunc: (data: { event: string; timestamp: number }) => void
+    listenerFunc: (data: { event: string; timestamp: number; uri?: string }) => void
   ): Promise<any>;
 
   /**

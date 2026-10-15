@@ -5,6 +5,7 @@ import MediaStore, { MediaItem, AlbumInfo } from '../plugins/media-store.plugin'
 export interface MediaFilter {
   type?: 'image' | 'video' | 'all';
   album?: string;
+  albumId?: string;
 }
 
 export enum MediaSortType {
@@ -26,6 +27,7 @@ export class MediaService {
   private isScanning = false;
   private hasPermission = false;
   private mediaChangeListenerActive = false;
+  private mediaUpdatedListeners = new Set<() => void>();
 
   private readonly CACHE_KEY = 'media_cache';
   private readonly PERMISSION_KEY = 'has_media_permission';
@@ -195,6 +197,47 @@ export class MediaService {
     }
   }
 
+  /** Update the cached index using only rows added since its newest item. */
+  async refreshRecentMedia(notify = true): Promise<MediaItem[]> {
+    if (this.isScanning) return this.mediaItems;
+    if (!(await this.checkPermissions())) return this.mediaItems;
+    this.isScanning = true;
+    try {
+      const newest = this.mediaItems.reduce((value, item) => Math.max(value, Number(item.dateTaken) || 0), 0);
+      const addedAfter = Math.floor(newest / 1000);
+      const changed: MediaItem[] = [];
+      const pageSize = 500;
+      for (const mediaType of ['image', 'video'] as const) {
+        let offset = 0;
+        while (true) {
+          const result = await MediaStore.scanMedia({ limit: pageSize, offset, mediaType, addedAfter });
+          const page = this.normalizeMediaList(result);
+          changed.push(...page);
+          if (page.length < pageSize) break;
+          offset += pageSize;
+        }
+      }
+      const byKey = new Map<string, MediaItem>();
+      this.mediaItems.forEach(item => byKey.set(`${item.type}:${item.id}`, item));
+      changed.forEach(item => byKey.set(`${item.type}:${item.id}`, item));
+      this.mediaItems = Array.from(byKey.values()).sort((a, b) => (Number(b.dateTaken) || 0) - (Number(a.dateTaken) || 0));
+      await this.cacheMedia(this.mediaItems);
+      if (notify) this.notifyMediaUpdated();
+      return this.mediaItems;
+    } finally {
+      this.isScanning = false;
+    }
+  }
+
+  subscribeMediaUpdated(listener: () => void): () => void {
+    this.mediaUpdatedListeners.add(listener);
+    return () => this.mediaUpdatedListeners.delete(listener);
+  }
+
+  private notifyMediaUpdated() {
+    this.mediaUpdatedListeners.forEach(listener => listener());
+  }
+
   /**
    * Get media with filtering and sorting
    */
@@ -209,10 +252,12 @@ export class MediaService {
       filtered = filtered.filter(item => item.type === filter.type);
     }
 
-    if (filter?.album) {
+    if (filter?.album || filter?.albumId) {
       filtered = filtered.filter(item => {
-        const albumKey = (item as MediaItem & { bucketId?: string }).bucketId ?? item.bucket;
-        return albumKey === filter.album || item.bucket === filter.album;
+        const bucketId = (item as MediaItem & { bucketId?: string }).bucketId;
+        return filter.albumId
+          ? bucketId ? bucketId === filter.albumId : item.bucket === filter.album
+          : item.bucket === filter.album;
       });
     }
 
@@ -284,6 +329,7 @@ export class MediaService {
     this.mediaItems = this.mediaItems.filter(item => !deletedKeys.has(`${item.type}:${item.id}`));
     items.forEach(item => this.thumbnailCache.delete(item.id));
     await this.cacheMedia(this.mediaItems);
+    this.notifyMediaUpdated();
     return true;
   }
 
@@ -311,8 +357,10 @@ export class MediaService {
   /**
    * Get first media item in album (for cover)
    */
-  getAlbumCover(albumName: string): MediaItem | undefined {
-    return this.mediaItems.find(item => item.bucket === albumName);
+  getAlbumCover(albumName: string, albumId?: string): MediaItem | undefined {
+    return this.mediaItems.find(item => albumId
+      ? (item as MediaItem & { bucketId?: string }).bucketId === albumId
+      : item.bucket === albumName);
   }
 
   /**
@@ -322,8 +370,21 @@ export class MediaService {
     try {
       await MediaStore.addListener('mediaChanged', async (data) => {
         console.log('Media changed:', data);
-        // Refresh media in background
-        await this.scanAllMedia({ forceRefresh: true });
+        const uri = data.uri ?? '';
+        const match = uri.match(/\/(\d+)\/?$/);
+        const type = /\/video\//i.test(uri) ? 'video' : /\/images?\//i.test(uri) ? 'image' : undefined;
+        if (match && type) {
+          const id = match[1];
+          const result = await MediaStore.scanMedia({ mediaType: type, mediaId: id, limit: 1, offset: 0 });
+          const current = this.normalizeMediaList(result);
+          this.mediaItems = this.mediaItems.filter(item => !(item.id === id && item.type === type));
+          if (current.length) this.mediaItems.unshift(current[0]);
+          this.thumbnailCache.delete(id);
+          await this.cacheMedia(this.mediaItems);
+          this.notifyMediaUpdated();
+        } else {
+          await this.refreshRecentMedia();
+        }
       });
 
       await MediaStore.startMediaChangeListener();

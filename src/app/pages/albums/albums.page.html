@@ -41,7 +41,7 @@
     <div 
       class="album-card" 
       *ngFor="let album of allAlbums"
-      (click)="showAlbumActions(album)"
+      (click)="openAlbum(album)"
     >
       <div class="album-cover">
         <img 
@@ -63,6 +63,9 @@
         <h3>{{ album.name }}</h3>
         <p>{{ album.count }} {{ album.count === 1 ? 'item' : 'items' }}</p>
       </div>
+      <button *ngIf="album.type === 'custom'" class="album-delete" aria-label="Delete album" (click)="$event.stopPropagation(); deleteAlbum(album)">
+        <ion-icon name="ellipsis-horizontal"></ion-icon>
+      </button>
     </div>
   </div>
 

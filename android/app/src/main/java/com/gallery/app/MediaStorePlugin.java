@@ -229,12 +229,15 @@ public class MediaStorePlugin extends Plugin {
         }
         int limit = Math.max(1, call.getInt("limit", 100));
         int offset = Math.max(0, call.getInt("offset", 0));
+        Long addedAfterValue = call.getLong("addedAfter");
+        long addedAfter = addedAfterValue == null ? 0L : addedAfterValue;
+        String mediaId = call.getString("mediaId");
         String type = call.getString("mediaType", "all");
         JSArray media = new JSArray();
         try {
             ContentResolver resolver = getContext().getContentResolver();
-            queryMedia(resolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image", type, limit, offset, media);
-            queryMedia(resolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "video", type, limit, offset, media);
+            queryMedia(resolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image", type, limit, offset, addedAfter, mediaId, media);
+            queryMedia(resolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "video", type, limit, offset, addedAfter, mediaId, media);
             JSObject result = new JSObject();
             result.put("media", media);
             result.put("count", media.length());
@@ -245,7 +248,7 @@ public class MediaStorePlugin extends Plugin {
     }
 
     private void queryMedia(ContentResolver resolver, Uri collection, String kind, String requestedType,
-                            int limit, int offset, JSArray output) {
+                            int limit, int offset, long addedAfter, String mediaId, JSArray output) {
         if (!"all".equals(requestedType) && !kind.equals(requestedType)) return;
         String sort = MediaStore.MediaColumns.DATE_ADDED + " DESC";
         String[] projection = "video".equals(kind)
@@ -262,7 +265,11 @@ public class MediaStorePlugin extends Plugin {
                 MediaStore.MediaColumns.BUCKET_ID
             }
             : COMMON_PROJECTION;
-        try (Cursor cursor = resolver.query(collection, projection, null, null, sort)) {
+        String selection = mediaId != null ? MediaStore.MediaColumns._ID + " = ?"
+            : addedAfter > 0 ? MediaStore.MediaColumns.DATE_ADDED + " >= ?" : null;
+        String[] selectionArgs = mediaId != null ? new String[] { mediaId }
+            : addedAfter > 0 ? new String[] { Long.toString(addedAfter) } : null;
+        try (Cursor cursor = resolver.query(collection, projection, selection, selectionArgs, sort)) {
             if (cursor == null) return;
             int idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID);
             int nameCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME);
@@ -333,20 +340,20 @@ public class MediaStorePlugin extends Plugin {
     public void getAlbums(PluginCall call) {
         if (!permissionResult().optBoolean("granted")) { call.resolve(new JSObject().put("albums", new JSArray())); return; }
         Map<String, Integer> counts = new HashMap<>();
-        Map<String, String> ids = new HashMap<>();
+        Map<String, String> names = new HashMap<>();
         ContentResolver resolver = getContext().getContentResolver();
-        collectAlbums(resolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, counts, ids);
-        collectAlbums(resolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI, counts, ids);
+        collectAlbums(resolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, counts, names);
+        collectAlbums(resolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI, counts, names);
         JSArray albums = new JSArray();
-        for (String name : counts.keySet()) {
+        for (String id : counts.keySet()) {
             JSObject album = new JSObject();
-            album.put("id", ids.get(name)); album.put("name", name); album.put("count", counts.get(name)); album.put("type", "auto");
+            album.put("id", id); album.put("name", names.get(id)); album.put("count", counts.get(id)); album.put("type", "auto");
             albums.put(album);
         }
         call.resolve(new JSObject().put("albums", albums));
     }
 
-    private void collectAlbums(ContentResolver resolver, Uri collection, Map<String, Integer> counts, Map<String, String> ids) {
+    private void collectAlbums(ContentResolver resolver, Uri collection, Map<String, Integer> counts, Map<String, String> names) {
         String[] columns = { MediaStore.MediaColumns.BUCKET_DISPLAY_NAME, MediaStore.MediaColumns.BUCKET_ID };
         try (Cursor cursor = resolver.query(collection, columns, null, null, null)) {
             if (cursor == null) return;
@@ -354,8 +361,9 @@ public class MediaStorePlugin extends Plugin {
                 String name = cursor.getString(0);
                 String id = cursor.getString(1);
                 if (name == null) name = "Unknown";
-                counts.put(name, counts.containsKey(name) ? counts.get(name) + 1 : 1);
-                ids.put(name, id == null ? name : id);
+                String key = id == null ? name : id;
+                counts.put(key, counts.containsKey(key) ? counts.get(key) + 1 : 1);
+                names.put(key, name);
             }
         }
     }
@@ -369,6 +377,7 @@ public class MediaStorePlugin extends Plugin {
                     JSObject event = new JSObject();
                     event.put("event", "changed");
                     event.put("timestamp", System.currentTimeMillis());
+                    if (uri != null) event.put("uri", uri.toString());
                     notifyListeners("mediaChanged", event);
                 }
             };

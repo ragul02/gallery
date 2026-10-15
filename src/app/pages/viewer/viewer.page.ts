@@ -6,6 +6,7 @@ import { MediaService, MediaSortType } from '../../services/media.service';
 import { PhotoService } from '../../services/photo.service';
 import { MediaItem } from '../../plugins/media-store.plugin';
 import { Photo } from '../../models/gallery.model';
+import { SystemBarsService } from '../../services/system-bars.service';
 
 @Component({
   selector: 'app-viewer',
@@ -33,8 +34,13 @@ export class ViewerPage implements OnInit {
     private mediaService: MediaService,
     private photoService: PhotoService,
     private actionSheetController: ActionSheetController,
-    private alertController: AlertController
+    private alertController: AlertController,
+    private systemBars: SystemBarsService
   ) {}
+
+  ionViewWillEnter() {
+    void this.systemBars.setHidden(true);
+  }
 
   async ngOnInit() {
     const mediaId = this.route.snapshot.paramMap.get('id');
