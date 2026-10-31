@@ -4,6 +4,8 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.PendingIntent;
 import android.content.ContentResolver;
+import android.content.ClipData;
+import android.content.Intent;
 import android.database.Cursor;
 import android.database.ContentObserver;
 import android.graphics.Bitmap;
@@ -20,6 +22,7 @@ import androidx.activity.result.ActivityResult;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.IntentSenderRequest;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.core.content.FileProvider;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -31,6 +34,7 @@ import com.getcapacitor.annotation.PermissionCallback;
 import com.getcapacitor.annotation.Permission;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.List;
@@ -108,6 +112,51 @@ public class MediaStorePlugin extends Plugin {
             requestPermissionForAlias("write", call, "legacyDeletePermissionCallback");
         } else {
             deleteUris(call, uris);
+        }
+    }
+
+    @PluginMethod
+    public void shareMedia(PluginCall call) {
+        String id = call.getString("id");
+        String type = call.getString("type", "image");
+        String localPath = call.getString("localPath");
+        if (id == null || (!"image".equals(type) && !"video".equals(type))) {
+            call.reject("A valid media item is required to share");
+            return;
+        }
+        try {
+            Uri uri;
+            if (localPath != null && !localPath.isEmpty()) {
+                File file = new File(getContext().getFilesDir(), localPath);
+                if (!file.isFile()) {
+                    call.reject("The saved image is no longer available");
+                    return;
+                }
+                uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", file);
+            } else {
+                Uri collection = "video".equals(type)
+                    ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                    : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+                uri = Uri.withAppendedPath(collection, id);
+            }
+
+            String mimeType = "video".equals(type) ? "video/*" : "image/*";
+            Intent sendIntent = new Intent(Intent.ACTION_SEND);
+            sendIntent.setType(mimeType);
+            sendIntent.putExtra(Intent.EXTRA_STREAM, uri);
+            sendIntent.setClipData(ClipData.newUri(getContext().getContentResolver(), "Shared media", uri));
+            sendIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            Intent chooser = Intent.createChooser(sendIntent, "Share media");
+            getActivity().runOnUiThread(() -> {
+                try {
+                    getActivity().startActivity(chooser);
+                    call.resolve(new JSObject().put("shared", true));
+                } catch (Exception e) {
+                    call.reject("No app could share this media", e);
+                }
+            });
+        } catch (Exception e) {
+            call.reject("Unable to share this media", e);
         }
     }
 

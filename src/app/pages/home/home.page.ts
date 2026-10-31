@@ -24,6 +24,7 @@ interface MediaDateGroup {
 })
 export class HomePage implements OnInit, OnDestroy {
   private unsubscribeMediaUpdates?: () => void;
+  private skipNextViewEntry = true;
   // Legacy photos from PhotoService
   photos: Photo[] = [];
   
@@ -84,6 +85,13 @@ export class HomePage implements OnInit, OnDestroy {
     await this.systemBars.setHidden(false);
     await this.photoService.whenReady();
 
+    // ngOnInit owns the first load. Avoid starting a second scan while that
+    // first cached/index load is still running.
+    if (this.skipNextViewEntry) {
+      this.skipNextViewEntry = false;
+      return;
+    }
+
     // Check for album filter from query params
     const albumFilter = this.router.routerState.snapshot.root.queryParams['album'];
     if (albumFilter) {
@@ -117,15 +125,54 @@ export class HomePage implements OnInit, OnDestroy {
     this.hasPermission = await this.mediaService.checkPermissions();
     console.log('🔵 HomePage: checkPermissions result:', this.hasPermission);
 
+    const albumFilter = this.router.routerState.snapshot.root.queryParams['album'];
+    if (albumFilter) {
+      this.activeAlbumName = albumFilter;
+      this.activeAlbumId = this.router.routerState.snapshot.root.queryParams['albumId'] || '';
+      this.currentFilter = MediaFilterType.ALL;
+    }
+
+    if (this.hasPermission && hasScanned) {
+      const cached = await this.mediaService.loadCachedMediaIndex();
+      const hasLocalPhotos = this.photos.length > 0;
+      if (cached.length > 0 || hasLocalPhotos) {
+        await this.loadMediaFromStore(albumFilter, this.activeAlbumId || undefined);
+      } else {
+        // Keep the empty-state card hidden until the silent index check finishes.
+        this.isLoading = true;
+      }
+      await this.refreshMediaIndexInBackground(albumFilter, this.activeAlbumId || undefined);
+      return;
+    }
+
     if (!this.hasPermission) {
       console.log('🟡 HomePage: No permission, calling scanDeviceMedia with showMessage=false, forceRefresh=false');
+      this.isLoading = true;
       await this.scanDeviceMedia(false, false);
       if (!this.hasPermission) await this.loadMediaFromStore();
       return;
     }
 
     console.log('🟢 HomePage: Has permission, calling scanDeviceMedia with showMessage=false, forceRefresh=' + !hasScanned);
+    this.isLoading = true;
     await this.scanDeviceMedia(false, !hasScanned);
+  }
+
+  private async refreshMediaIndexInBackground(albumName?: string, albumId?: string) {
+    const previousKeys = new Set(this.mediaService.getMedia().map(item => `${item.type}:${item.id}`));
+    const waitingForFirstIndex = this.isLoading;
+    try {
+      await this.mediaService.scanAllMedia();
+      await this.mediaService.refreshRecentMedia(false);
+      const refreshed = this.mediaService.getMedia();
+      const hasNewMedia = refreshed.some(item => !previousKeys.has(`${item.type}:${item.id}`));
+      if (hasNewMedia || waitingForFirstIndex) {
+        await this.loadMediaFromStore(albumName, albumId);
+      }
+    } catch (error) {
+      console.warn('Background gallery refresh failed; keeping the cached gallery visible.', error);
+      if (waitingForFirstIndex) await this.loadMediaFromStore(albumName, albumId);
+    }
   }
 
   async scanDeviceMedia(showPermissionMessage = true, forceRefresh = false) {

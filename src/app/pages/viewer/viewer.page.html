@@ -10,15 +10,21 @@
       <div class="viewer-nav-title">{{ currentPhoto?.name || currentMedia?.name || 'Media' }}<small>{{ mediaCounter }}</small></div>
     </ion-title>
     <ion-buttons slot="end">
-      <ion-button class="toolbar-action" aria-label="Media options" (click)="showMediaMenu()">
+      <ion-button *ngIf="isImageMedia && !isEditing" class="toolbar-action" aria-label="Edit photo" (click)="startEditing()">
+        <ion-icon slot="icon-only" name="create-outline"></ion-icon>
+      </ion-button>
+      <ion-button *ngIf="!isEditing" class="toolbar-action" aria-label="Share media" (click)="shareCurrentMedia()">
+        <ion-icon slot="icon-only" name="share-social-outline"></ion-icon>
+      </ion-button>
+      <ion-button *ngIf="!isEditing" class="toolbar-action" aria-label="Media options" (click)="showMediaMenu()">
         <ion-icon slot="icon-only" name="ellipsis-vertical"></ion-icon>
       </ion-button>
     </ion-buttons>
   </ion-toolbar>
 </ion-header>
 
-<ion-content class="viewer-content">
-  <main class="viewer-stage" (touchstart)="onTouchStart($event)" (touchend)="onTouchEnd($event)">
+<ion-content class="viewer-content" [class.editor-open]="isEditing">
+  <main class="viewer-stage" *ngIf="!isEditing" (touchstart)="onTouchStart($event)" (touchend)="onTouchEnd($event)">
     <img
       *ngIf="currentPhoto"
       [src]="currentPhoto.webviewPath"
@@ -53,6 +59,56 @@
       <ion-icon name="alert-circle-outline"></ion-icon>
       <span>This video could not be opened. The file may be unavailable or use an unsupported format.</span>
     </div>
+
   </main>
+
+  <section class="editor-workspace" *ngIf="isEditing" aria-label="Photo editor">
+      <div class="edit-preview-wrap">
+        <image-cropper
+          #imageCropper
+          class="edit-image-cropper"
+          [imageURL]="currentImageSource"
+          [maintainAspectRatio]="maintainCropAspectRatio"
+          [aspectRatio]="cropAspectRatio"
+          [autoCrop]="false"
+          [output]="'blob'"
+          [format]="'jpeg'"
+          [imageQuality]="92"
+          [cropperMinWidth]="40"
+          [cropperMinHeight]="40"
+          [backgroundColor]="'#101116'"
+          [cropperFrameAriaLabel]="'Adjust crop area'"
+          [style.--selected-filter]="activeFilterCss"
+          (imageLoaded)="onEditorImageLoad($event)"
+        ></image-cropper>
+      </div>
+      <div class="editor-controls" (touchstart)="$event.stopPropagation()" (touchend)="$event.stopPropagation()">
+        <div class="editor-section editor-filter-section">
+          <div class="editor-section-title">Filters</div>
+          <div class="editor-options">
+            <button *ngFor="let filter of filters" type="button" class="editor-option" [class.active]="activeFilter === filter.id" [attr.aria-pressed]="activeFilter === filter.id" (click)="setActiveFilter(filter.id, $event)">
+              <span class="filter-swatch" [style.filter]="filter.css"><ion-icon name="image-outline"></ion-icon></span>
+              <span>{{ filter.label }}</span>
+            </button>
+          </div>
+        </div>
+        <div class="editor-section editor-crop-section">
+          <div class="editor-section-title crop-title">Crop ratio</div>
+          <div class="crop-options">
+            <button *ngFor="let crop of crops" type="button" class="crop-option" [class.active]="activeCrop === crop.id" [attr.aria-pressed]="activeCrop === crop.id" (click)="setActiveCrop(crop.id, $event)">
+              <ion-icon name="crop-outline"></ion-icon>{{ crop.label }}
+            </button>
+          </div>
+          <p class="free-crop-hint" *ngIf="activeCrop === 'free'">Drag inside the frame to move it. Drag an edge or corner to resize.</p>
+        </div>
+      </div>
+      <div class="editor-actions">
+        <ion-button fill="clear" [disabled]="isSavingEdit" (click)="cancelEditing()">Cancel</ion-button>
+        <ion-button class="save-edit-button" [disabled]="isSavingEdit" (click)="saveEditedCopy()">
+          <ion-spinner *ngIf="isSavingEdit" name="crescent"></ion-spinner>
+          <span>{{ isSavingEdit ? 'Saving…' : 'Save copy' }}</span>
+        </ion-button>
+      </div>
+  </section>
 
 </ion-content>

@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, ViewChild } from '@angular/core';
 import { Capacitor } from '@capacitor/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ActionSheetController, AlertController } from '@ionic/angular';
@@ -7,6 +7,7 @@ import { PhotoService } from '../../services/photo.service';
 import { MediaItem } from '../../plugins/media-store.plugin';
 import { Photo } from '../../models/gallery.model';
 import { SystemBarsService } from '../../services/system-bars.service';
+import { ImageCropperComponent, LoadedImage } from 'ngx-image-cropper';
 
 @Component({
   selector: 'app-viewer',
@@ -24,6 +25,27 @@ export class ViewerPage implements OnInit {
   mediaSourceUrl = '';
   imageLoadFailed = false;
   playbackError = false;
+  isEditing = false;
+  isSavingEdit = false;
+  activeFilter = 'original';
+  activeCrop = 'original';
+  editorImageWidth = 0;
+  editorImageHeight = 0;
+  @ViewChild(ImageCropperComponent) imageCropper?: ImageCropperComponent;
+  readonly filters = [
+    { id: 'original', label: 'Original', css: 'none' },
+    { id: 'mono', label: 'Mono', css: 'grayscale(1)' },
+    { id: 'warm', label: 'Warm', css: 'sepia(.28) saturate(1.18)' },
+    { id: 'cool', label: 'Cool', css: 'saturate(.88) hue-rotate(12deg)' },
+    { id: 'vivid', label: 'Vivid', css: 'saturate(1.35) contrast(1.05)' }
+  ];
+  readonly crops = [
+    { id: 'original', label: 'Original' },
+    { id: 'square', label: '1:1' },
+    { id: '4:3', label: '4:3' },
+    { id: '16:9', label: '16:9' },
+    { id: 'free', label: 'Free crop' }
+  ];
   private touchStartX = 0;
   private touchStartY = 0;
   private suppressClickAfterSwipe = false;
@@ -165,6 +187,148 @@ export class ViewerPage implements OnInit {
 
   close() {
     this.router.navigate(['/home']);
+  }
+
+  get isImageMedia(): boolean {
+    return !!this.currentPhoto || this.currentMedia?.type === 'image';
+  }
+
+  get currentImageSource(): string {
+    return this.currentPhoto?.webviewPath || this.mediaSourceUrl || '';
+  }
+
+  get activeFilterCss(): string {
+    return this.filters.find(filter => filter.id === this.activeFilter)?.css || 'none';
+  }
+
+  setActiveFilter(filterId: string, event?: Event) {
+    event?.stopPropagation();
+    this.activeFilter = filterId;
+  }
+
+  setActiveCrop(cropId: string, event?: Event) {
+    event?.stopPropagation();
+    this.activeCrop = cropId;
+  }
+
+  onEditorImageLoad(image: LoadedImage) {
+    this.editorImageWidth = image.original.size.width;
+    this.editorImageHeight = image.original.size.height;
+  }
+
+  get maintainCropAspectRatio(): boolean {
+    return this.activeCrop !== 'free';
+  }
+
+  get cropAspectRatio(): number {
+    if (this.activeCrop === 'square') return 1;
+    if (this.activeCrop === '4:3') return this.getImageAspectRatio() >= 1 ? 4 / 3 : 3 / 4;
+    if (this.activeCrop === '16:9') return this.getImageAspectRatio() >= 1 ? 16 / 9 : 9 / 16;
+    if (this.activeCrop === 'free') return 1;
+    return this.getImageAspectRatio();
+  }
+
+  private getImageAspectRatio(): number {
+    const width = this.editorImageWidth || this.currentMedia?.width;
+    const height = this.editorImageHeight || this.currentMedia?.height;
+    return width && height ? width / height : 4 / 3;
+  }
+
+  startEditing() {
+    if (!this.isImageMedia) return;
+    this.activeFilter = 'original';
+    this.activeCrop = 'original';
+    this.editorImageWidth = 0;
+    this.editorImageHeight = 0;
+    this.isEditing = true;
+  }
+
+  cancelEditing() {
+    if (!this.isSavingEdit) this.isEditing = false;
+  }
+
+  async saveEditedCopy() {
+    const source = this.currentImageSource;
+    if (!source || !this.imageCropper || this.isSavingEdit) return;
+    this.isSavingEdit = true;
+    try {
+      const cropResult = await this.imageCropper.crop('blob');
+      if (!cropResult?.blob) throw new Error('The crop area is not ready. Please adjust it and try again.');
+      const blob = this.activeFilter === 'original'
+        ? cropResult.blob
+        : await this.applyFilterToBlob(cropResult.blob, this.activeFilterCss);
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Could not read edited image.'));
+        reader.onerror = () => reject(new Error('Could not read edited image.'));
+        reader.readAsDataURL(blob);
+      });
+      const originalName = this.currentPhoto?.name || this.currentMedia?.name || 'photo';
+      await this.photoService.saveEditedCopy(dataUrl, originalName);
+      this.isEditing = false;
+      const alert = await this.alertController.create({ header: 'Edited copy saved', message: 'The original is unchanged. Find the edited copy in the app gallery.', buttons: ['OK'] });
+      await alert.present();
+    } catch (error) {
+      console.error('Could not save edited image:', error);
+      const alert = await this.alertController.create({ header: 'Could not save image', message: 'Please try again. The original photo has not been changed.', buttons: ['OK'] });
+      await alert.present();
+    } finally {
+      this.isSavingEdit = false;
+    }
+  }
+
+  private async applyFilterToBlob(blob: Blob, filter: string): Promise<Blob> {
+    const image = await createImageBitmap(blob);
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Image filter is unavailable.');
+    context.filter = filter;
+    context.drawImage(image, 0, 0);
+    image.close();
+    return new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(result => result ? resolve(result) : reject(new Error('Could not apply the selected filter.')), 'image/jpeg', 0.92);
+    });
+  }
+
+  async shareCurrentMedia() {
+    const item = this.currentMedia;
+    const photo = this.currentPhoto;
+    if (!item && !photo) return;
+    try {
+      if (Capacitor.getPlatform() === 'android') {
+        await this.mediaService.shareMedia({
+          id: item?.id || photo!.id,
+          type: item?.type || 'image',
+          localPath: photo?.filepath
+        });
+        return;
+      }
+      const source = this.currentImageSource;
+      if (navigator.share) {
+        const title = item?.name || photo?.name || 'Media';
+        const mediaUrl = photo ? source : this.mediaSourceUrl;
+        try {
+          const response = await fetch(mediaUrl);
+          const file = new File([await response.blob()], title, { type: item?.type === 'video' ? 'video/mp4' : 'image/jpeg' });
+          if (navigator.canShare?.({ files: [file] })) {
+            await navigator.share({ title, files: [file] });
+            return;
+          }
+        } catch (error) {
+          console.warn('Could not prepare a shareable media file:', error);
+        }
+        await navigator.share({ title, url: mediaUrl });
+      } else {
+        const alert = await this.alertController.create({ header: 'Sharing unavailable', message: 'Use the Android app to share this media.', buttons: ['OK'] });
+        await alert.present();
+      }
+    } catch (error) {
+      console.error('Could not share media:', error);
+      const alert = await this.alertController.create({ header: 'Could not share media', message: 'Please try again.', buttons: ['OK'] });
+      await alert.present();
+    }
   }
 
   async showMediaMenu() {

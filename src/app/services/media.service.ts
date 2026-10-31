@@ -113,6 +113,13 @@ export class MediaService {
     return result.value === 'true';
   }
 
+  /** Load the last saved index into memory so the gallery can render on startup. */
+  async loadCachedMediaIndex(): Promise<MediaItem[]> {
+    const cached = await this.loadCachedMedia();
+    if (cached.length > 0) this.mediaItems = cached;
+    return cached;
+  }
+
   /**
    * Mark initial scan as complete
    */
@@ -329,6 +336,10 @@ export class MediaService {
   async deleteMedia(items: Array<Pick<MediaItem, 'id' | 'type'>>): Promise<boolean> {
     const result = await this.deleteMediaDetailed(items);
     return result.deleted || result.deletedCount > 0;
+  }
+
+  async shareMedia(options: { id: string; type: 'image' | 'video'; localPath?: string }): Promise<void> {
+    await MediaStore.shareMedia(options);
   }
 
   async deleteMediaDetailed(items: Array<Pick<MediaItem, 'id' | 'type'>>): Promise<{ deleted: boolean; deletedCount: number }> {

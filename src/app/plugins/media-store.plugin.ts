@@ -35,6 +35,9 @@ export interface MediaStorePlugin {
   /** Delete selected device media using Android's system confirmation UI. */
   deleteMedia(options: { items: Array<{ id: string; type: 'image' | 'video' }> }): Promise<{ deleted: boolean; deletedKeys?: string[] }>;
 
+  /** Open Android's native share sheet for a MediaStore item or app-saved image. */
+  shareMedia(options: { id: string; type: 'image' | 'video'; localPath?: string }): Promise<{ shared: boolean }>;
+
   /**
    * Get all albums/folders
    */
@@ -120,6 +123,7 @@ const DebugMediaStore = {
   scanMedia: OriginalMediaStore.scanMedia,
   getThumbnail: OriginalMediaStore.getThumbnail,
   deleteMedia: (options) => OriginalMediaStore.deleteMedia(options),
+  shareMedia: (options) => OriginalMediaStore.shareMedia(options),
   getAlbums: OriginalMediaStore.getAlbums,
   startMediaChangeListener: OriginalMediaStore.startMediaChangeListener,
   stopMediaChangeListener: OriginalMediaStore.stopMediaChangeListener,

@@ -164,6 +164,27 @@ export class PhotoService {
     return savedPhoto;
   }
 
+  /** Save an edited image as a separate app-gallery item, preserving its source. */
+  async saveEditedCopy(dataUrl: string, originalName: string): Promise<Photo> {
+    const comma = dataUrl.indexOf(',');
+    if (comma < 0) throw new Error('Edited image data is invalid');
+    const base64 = dataUrl.slice(comma + 1);
+    const fileName = `edited-${Date.now()}.jpeg`;
+    await Filesystem.writeFile({ path: fileName, data: base64, directory: Directory.Data });
+    const photo: Photo = {
+      id: fileName,
+      filepath: fileName,
+      webviewPath: dataUrl,
+      base64,
+      name: `Edited ${originalName}`,
+      dateTaken: new Date(),
+      size: Math.round(base64.length * 3 / 4)
+    };
+    this.photos.unshift(photo);
+    await this.savePhotos();
+    return photo;
+  }
+
   // Save picture to filesystem
   private async savePicture(photo: CameraPhoto): Promise<Photo> {
     const base64Data = await this.readAsBase64(photo);

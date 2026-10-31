@@ -30,12 +30,12 @@
 
 <ion-content class="gallery-content" [scrollEvents]="true" (ionScroll)="onScroll($event)" data-keep-system-bars>
   <main class="gallery-page" [class.selection-mode]="selectionMode">
-    <div class="gallery-summary" *ngIf="hasPermission && !selectionMode">
+    <!-- <div class="gallery-summary" *ngIf="hasPermission && !selectionMode">
       <span><strong>{{ totalMediaCount }}</strong> {{ totalMediaCount === 1 ? 'item' : 'items' }}</span>
       <span class="summary-divider" *ngIf="imageCount > 0 && videoCount > 0"></span>
       <span *ngIf="imageCount > 0"><ion-icon name="image-outline"></ion-icon>{{ imageCount }}</span>
       <span *ngIf="videoCount > 0"><ion-icon name="videocam-outline"></ion-icon>{{ videoCount }}</span>
-    </div>
+    </div> -->
 
     <div class="loading-state" *ngIf="isLoading">
       <ion-spinner name="crescent"></ion-spinner>
