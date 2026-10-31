@@ -1,44 +1,35 @@
-<ion-header class="gallery-header">
+<ion-header class="gallery-header" data-keep-system-bars>
   <ion-toolbar>
-    <div class="brand-mark" slot="start" aria-hidden="true">
+    <ion-buttons slot="start" *ngIf="selectionMode">
+      <ion-button class="toolbar-action" aria-label="Cancel selection" (click)="cancelSelection()">
+        <ion-icon slot="icon-only" name="close-outline"></ion-icon>
+      </ion-button>
+    </ion-buttons>
+    <div class="brand-mark" slot="start" aria-hidden="true" *ngIf="!selectionMode">
       <ion-icon name="images"></ion-icon>
     </div>
     <ion-title>{{ selectionMode ? selectedMediaKeys.size + ' selected' : (isAlbumView ? activeAlbumName : 'Gallery') }}</ion-title>
     <ion-buttons slot="end" *ngIf="!selectionMode">
-      <ion-button class="toolbar-action" aria-label="Filter and sort" (click)="showSortOptions()">
-        <ion-icon slot="icon-only" name="funnel-outline"></ion-icon>
-      </ion-button>
-      <ion-button class="toolbar-action" aria-label="Albums" routerLink="/albums">
-        <ion-icon slot="icon-only" name="albums-outline"></ion-icon>
+      <ion-button class="toolbar-action" aria-label="Refresh gallery" (click)="scanDeviceMedia(false, true)">
+        <ion-icon slot="icon-only" name="refresh-outline"></ion-icon>
       </ion-button>
       <ion-button class="toolbar-action" aria-label="Gallery dashboard" routerLink="/settings">
         <ion-icon slot="icon-only" name="settings-outline"></ion-icon>
       </ion-button>
     </ion-buttons>
     <ion-buttons slot="end" *ngIf="selectionMode">
-      <ion-button class="toolbar-action" aria-label="Cancel selection" (click)="cancelSelection()">
-        <ion-icon slot="icon-only" name="close-outline"></ion-icon>
+      <ion-button class="toolbar-action" [attr.aria-label]="isEverythingSelected ? 'Deselect all' : 'Select all'" (click)="toggleSelectAll()">
+        <ion-icon slot="icon-only" [name]="isEverythingSelected ? 'checkbox-outline' : 'checkmark-done-outline'"></ion-icon>
       </ion-button>
-      <ion-button class="toolbar-action delete-action" aria-label="Delete selected media" (click)="deleteSelectedMedia()">
+      <ion-button class="toolbar-action delete-action" aria-label="Delete selected media" [disabled]="isDeleting || selectedMediaKeys.size === 0" (click)="deleteSelectedMedia()">
         <ion-icon slot="icon-only" name="trash-outline"></ion-icon>
       </ion-button>
     </ion-buttons>
   </ion-toolbar>
 </ion-header>
 
-<ion-content class="gallery-content" [scrollEvents]="true" (ionScroll)="onScroll($event)">
-  <main class="gallery-page">
-    <nav class="filter-row" aria-label="Filter gallery" *ngIf="!selectionMode">
-      <button class="filter-chip" [class.active]="currentFilter === MediaFilterType.ALL" (click)="selectFilter(MediaFilterType.ALL)">
-        <ion-icon name="grid-outline"></ion-icon><span>All</span>
-      </button>
-      <button class="filter-chip" [class.active]="currentFilter === MediaFilterType.IMAGES" (click)="selectFilter(MediaFilterType.IMAGES)">
-        <ion-icon name="image-outline"></ion-icon><span>Images</span>
-      </button>
-      <button class="filter-chip" [class.active]="currentFilter === MediaFilterType.VIDEOS" (click)="selectFilter(MediaFilterType.VIDEOS)">
-        <ion-icon name="videocam-outline"></ion-icon><span>Videos</span>
-      </button>
-    </nav>
+<ion-content class="gallery-content" [scrollEvents]="true" (ionScroll)="onScroll($event)" data-keep-system-bars>
+  <main class="gallery-page" [class.selection-mode]="selectionMode">
     <div class="gallery-summary" *ngIf="hasPermission && !selectionMode">
       <span><strong>{{ totalMediaCount }}</strong> {{ totalMediaCount === 1 ? 'item' : 'items' }}</span>
       <span class="summary-divider" *ngIf="imageCount > 0 && videoCount > 0"></span>
@@ -51,38 +42,58 @@
       <span>Loading your gallery…</span>
     </div>
 
-    <section class="media-grid" *ngIf="!isLoading && hasPermission && displayedMedia.length > 0" aria-label="Photos and videos">
-      <button class="media-card" *ngFor="let media of displayedMedia; trackBy: trackByMediaId" (pointerdown)="startMediaLongPress(media)" (pointerup)="cancelMediaLongPress()" (pointerleave)="cancelMediaLongPress()" (pointercancel)="cancelMediaLongPress()" (contextmenu)="onMediaContextMenu($event, media)" (click)="onMediaCardClick(media)" [class.selected]="selectedMediaKeys.has(media.type + ':' + media.id)" [attr.aria-label]="media.type === 'video' ? 'Open video' : 'Open photo'">
-        <img *ngIf="media.thumbnailUrl" [src]="media.thumbnailUrl" [alt]="media.name" loading="lazy" />
-        <span class="thumbnail-placeholder" *ngIf="!media.thumbnailUrl"><ion-spinner name="crescent"></ion-spinner></span>
-        <span class="selection-check" *ngIf="selectionMode">
-          <ion-icon [name]="selectedMediaKeys.has(media.type + ':' + media.id) ? 'checkmark-circle' : 'ellipse-outline'"></ion-icon>
-        </span>
-        <span class="video-indicator" *ngIf="media.type === 'video'">
-          <ion-icon name="play"></ion-icon>
-          <span *ngIf="media.duration">{{ (media.duration / 1000).toFixed(0) }}s</span>
-        </span>
-      </button>
-    </section>
+    <ng-container *ngIf="!isLoading && (hasPermission || mediaItems.length > 0)">
+      <section class="date-group" *ngFor="let group of dateGroups; trackBy: trackByDateGroup">
+        <header class="date-group-header">
+          <div class="date-heading">
+            <span class="date-overline">{{ group.label }}</span>
+            <h2>{{ group.dateLabel }}</h2>
+          </div>
+          <button class="date-selection" type="button"
+            [class.selected]="group.selectionState === 'all'"
+            [class.partial]="group.selectionState === 'partial'"
+            [attr.aria-label]="group.selectionState === 'all' ? 'Deselect all items from ' + group.dateLabel : 'Select all items from ' + group.dateLabel"
+            [attr.aria-pressed]="group.selectionState === 'all'"
+            (click)="toggleDateSelection(group.key)">
+            <ion-icon [name]="group.selectionState === 'all' ? 'checkmark-circle' : group.selectionState === 'partial' ? 'remove-circle' : 'ellipse-outline'"></ion-icon>
+          </button>
+        </header>
 
-    <section class="media-grid local-grid" *ngIf="photos.length > 0 && currentFilter !== MediaFilterType.VIDEOS && !isAlbumView" aria-label="Photos saved in this app">
-      <button class="media-card" *ngFor="let photo of photos" (click)="openPhotoViewer(photo)" aria-label="Open saved photo">
-        <img [src]="photo.webviewPath" [alt]="photo.name" loading="lazy" />
-      </button>
-    </section>
+        <div class="media-grid" [attr.aria-label]="'Media from ' + group.dateLabel">
+          <button class="media-card" *ngFor="let media of group.items; trackBy: trackByMediaId"
+            (pointerdown)="startMediaLongPress(media)" (pointerup)="cancelMediaLongPress()"
+            (pointerleave)="cancelMediaLongPress()" (pointercancel)="cancelMediaLongPress()"
+            (contextmenu)="onMediaContextMenu($event, media)" (click)="onMediaCardClick(media)"
+            [class.selected]="media.selected"
+            [attr.aria-label]="media.type === 'video' ? 'Open video' : 'Open photo'"
+            [attr.aria-pressed]="selectionMode ? media.selected : null">
+            <img *ngIf="media.thumbnailUrl" [src]="media.thumbnailUrl" [alt]="media.name" loading="lazy" />
+            <span class="thumbnail-placeholder" *ngIf="!media.thumbnailUrl"><ion-spinner name="crescent"></ion-spinner></span>
+            <span class="selected-wash" [class.active]="media.selected"></span>
+            <span class="selection-check">
+              <ion-icon [name]="media.selected ? 'checkmark-circle' : 'ellipse-outline'"></ion-icon>
+            </span>
+            <span class="video-indicator" *ngIf="media.type === 'video'">
+              <ion-icon name="play"></ion-icon>
+              <span>{{ formatDuration(media.duration) }}</span>
+            </span>
+          </button>
+        </div>
+      </section>
+    </ng-container>
 
-    <section class="empty-card" *ngIf="!isLoading && !hasPermission">
+    <section class="empty-card" *ngIf="!isLoading && !hasPermission && mediaItems.length === 0">
       <div class="empty-icon"><ion-icon name="images-outline"></ion-icon></div>
       <h2>Your photos, all in one place</h2>
-      <p>Allow access to your photos and videos to see your gallery.</p>
+      <p>Allow photo and video access to see your gallery.</p>
       <ion-button shape="round" (click)="scanDeviceMedia()">
         <ion-icon slot="start" name="lock-open-outline"></ion-icon>Allow access
       </ion-button>
     </section>
 
-    <section class="empty-card" *ngIf="!isLoading && hasPermission && displayedMedia.length === 0 && (isAlbumView || photos.length === 0)">
+    <section class="empty-card" *ngIf="!isLoading && hasPermission && mediaItems.length === 0">
       <div class="empty-icon"><ion-icon name="images-outline"></ion-icon></div>
-      <h2>{{ isAlbumView ? 'No media in this album' : 'No photos yet' }}</h2>
+      <h2>{{ isAlbumView ? 'No media in this album' : currentFilter === MediaFilterType.VIDEOS ? 'No videos yet' : 'No photos yet' }}</h2>
       <p>{{ isAlbumView ? 'This folder does not contain any accessible media.' : 'Your device gallery is empty. Add a photo or refresh the media list.' }}</p>
       <ion-button *ngIf="!isAlbumView" fill="outline" shape="round" (click)="scanDeviceMedia()">
         <ion-icon slot="start" name="refresh-outline"></ion-icon>Refresh media
@@ -90,7 +101,29 @@
     </section>
   </main>
 
-  <ion-fab vertical="bottom" horizontal="end" slot="fixed" *ngIf="!selectionMode">
+  <nav class="bottom-navigation" slot="fixed" aria-label="Gallery media views">
+    <button type="button" class="bottom-nav-item" [class.active]="currentFilter === MediaFilterType.ALL"
+      [attr.aria-current]="currentFilter === MediaFilterType.ALL ? 'page' : null" (click)="selectFilter(MediaFilterType.ALL)">
+      <span class="nav-icon"><ion-icon [name]="currentFilter === MediaFilterType.ALL ? 'grid' : 'grid-outline'"></ion-icon></span>
+      <span>All</span>
+    </button>
+    <button type="button" class="bottom-nav-item" [class.active]="currentFilter === MediaFilterType.IMAGES"
+      [attr.aria-current]="currentFilter === MediaFilterType.IMAGES ? 'page' : null" (click)="selectFilter(MediaFilterType.IMAGES)">
+      <span class="nav-icon"><ion-icon [name]="currentFilter === MediaFilterType.IMAGES ? 'images' : 'images-outline'"></ion-icon></span>
+      <span>Images</span>
+    </button>
+    <button type="button" class="bottom-nav-item" [class.active]="currentFilter === MediaFilterType.VIDEOS"
+      [attr.aria-current]="currentFilter === MediaFilterType.VIDEOS ? 'page' : null" (click)="selectFilter(MediaFilterType.VIDEOS)">
+      <span class="nav-icon"><ion-icon [name]="currentFilter === MediaFilterType.VIDEOS ? 'videocam' : 'videocam-outline'"></ion-icon></span>
+      <span>Videos</span>
+    </button>
+    <button type="button" class="bottom-nav-item" routerLink="/albums" aria-label="Open albums">
+      <span class="nav-icon"><ion-icon name="albums-outline"></ion-icon></span>
+      <span>Albums</span>
+    </button>
+  </nav>
+
+  <ion-fab class="gallery-add-fab" vertical="bottom" horizontal="end" slot="fixed" *ngIf="!selectionMode">
     <ion-fab-button class="add-fab" aria-label="Add a photo" (click)="addPhotoToGallery()">
       <ion-icon name="add"></ion-icon>
     </ion-fab-button>

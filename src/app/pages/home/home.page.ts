@@ -7,6 +7,15 @@ import { Photo, SortType, MediaItemView, MediaFilterType } from '../../models/ga
 import { MediaItem } from '../../plugins/media-store.plugin';
 import { SystemBarsService } from '../../services/system-bars.service';
 
+interface MediaDateGroup {
+  key: string;
+  date: Date;
+  items: MediaItemView[];
+  label: string;
+  dateLabel: string;
+  selectionState: 'none' | 'partial' | 'all';
+}
+
 @Component({
   selector: 'app-home',
   templateUrl: 'home.page.html',
@@ -21,7 +30,11 @@ export class HomePage implements OnInit, OnDestroy {
   // New media from MediaService
   mediaItems: MediaItemView[] = [];
   displayedMedia: MediaItemView[] = [];
+  dateGroups: MediaDateGroup[] = [];
   thumbnails = new Map<string, string>();
+  private mediaByDate = new Map<string, MediaItemView[]>();
+  private mediaByKey = new Map<string, MediaItemView>();
+  private selectedCountsByDate = new Map<string, number>();
   
   currentSort: MediaSortType = MediaSortType.DATE_DESC;
   currentFilter: MediaFilterType = MediaFilterType.ALL;
@@ -39,9 +52,11 @@ export class HomePage implements OnInit, OnDestroy {
   private thumbnailQueue: MediaItemView[] = [];
   private loadingThumbnails = false;
   private longPressTimer?: ReturnType<typeof setTimeout>;
-  private suppressNextMediaClick = false;
+  private suppressMediaClickKey?: string;
+  private suppressMediaClickTimer?: ReturnType<typeof setTimeout>;
   selectionMode = false;
   selectedMediaKeys = new Set<string>();
+  isDeleting = false;
 
   constructor(
     public photoService: PhotoService,
@@ -61,10 +76,12 @@ export class HomePage implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this.unsubscribeMediaUpdates?.();
+    this.cancelMediaLongPress();
+    if (this.suppressMediaClickTimer) clearTimeout(this.suppressMediaClickTimer);
   }
 
   async ionViewWillEnter() {
-    await this.systemBars.setHidden(true);
+    await this.systemBars.setHidden(false);
     await this.photoService.whenReady();
 
     // Check for album filter from query params
@@ -103,6 +120,7 @@ export class HomePage implements OnInit, OnDestroy {
     if (!this.hasPermission) {
       console.log('🟡 HomePage: No permission, calling scanDeviceMedia with showMessage=false, forceRefresh=false');
       await this.scanDeviceMedia(false, false);
+      if (!this.hasPermission) await this.loadMediaFromStore();
       return;
     }
 
@@ -129,6 +147,8 @@ export class HomePage implements OnInit, OnDestroy {
         });
         await alert.present();
       }
+      this.loadLegacyPhotos();
+      await this.loadMediaFromStore();
       return;
     }
 
@@ -167,6 +187,9 @@ export class HomePage implements OnInit, OnDestroy {
       
       // Fall back to legacy
       this.loadLegacyPhotos();
+      // A device scan can fail transiently (for example, while Android refreshes
+      // MediaStore). Still render the last cached index so the gallery is not blank.
+      await this.loadMediaFromStore();
     }
   }
 
@@ -183,10 +206,25 @@ export class HomePage implements OnInit, OnDestroy {
         albumId
       };
 
-      const allMedia = this.mediaService.getMedia(filter, this.currentSort);
+      const allMedia = this.hasPermission ? this.mediaService.getMedia(filter, this.currentSort) : [];
       
       // Convert to view models
       this.mediaItems = allMedia.map(item => this.convertToViewModel(item));
+      if (!albumName && !albumId && this.currentFilter !== MediaFilterType.VIDEOS) {
+        this.mediaItems.push(...this.photos.map(photo => this.convertLocalPhoto(photo)));
+      }
+      this.mediaItems.sort((a, b) => b.dateTaken.getTime() - a.dateTaken.getTime());
+      this.mediaByKey.clear();
+      this.mediaItems.forEach(item => this.mediaByKey.set(this.mediaKey(item), item));
+      this.buildMediaByDate();
+      if (this.selectionMode) {
+        const availableKeys = new Set(this.mediaItems.map(item => this.mediaKey(item)));
+        this.selectedMediaKeys.forEach(key => {
+          if (!availableKeys.has(key)) this.selectedMediaKeys.delete(key);
+        });
+        this.rebuildSelectionCounts();
+        if (this.selectedMediaKeys.size === 0) this.selectionMode = false;
+      }
       
       // Load first batch
       this.currentBatch = 0;
@@ -209,8 +247,71 @@ export class HomePage implements OnInit, OnDestroy {
       bucket: item.bucket,
       width: item.width,
       height: item.height,
-      duration: item.duration
+      duration: item.duration,
+      source: 'device'
     };
+  }
+
+  private convertLocalPhoto(photo: Photo): MediaItemView {
+    return {
+      id: photo.id,
+      name: photo.name,
+      dateTaken: new Date(photo.dateTaken),
+      size: photo.size || 0,
+      thumbnailUrl: photo.webviewPath,
+      uri: photo.filepath,
+      type: 'image',
+      bucket: '',
+      width: 0,
+      height: 0,
+      source: 'local',
+      localPhoto: photo
+    };
+  }
+
+  private dateKey(date: Date): string {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  }
+
+  private buildMediaByDate() {
+    this.mediaByDate.clear();
+    for (const item of this.mediaItems) {
+      const key = this.dateKey(item.dateTaken);
+      const dayItems = this.mediaByDate.get(key);
+      if (dayItems) dayItems.push(item);
+      else this.mediaByDate.set(key, [item]);
+    }
+    this.rebuildVisibleDateGroups();
+  }
+
+  private rebuildVisibleDateGroups() {
+    const groups = new Map<string, MediaDateGroup>();
+    const todayKey = this.dateKey(new Date());
+    const yesterdayDate = new Date();
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterdayKey = this.dateKey(yesterdayDate);
+
+    for (const item of this.displayedMedia) {
+      const key = this.dateKey(item.dateTaken);
+      let group = groups.get(key);
+      if (!group) {
+        const date = new Date(item.dateTaken.getFullYear(), item.dateTaken.getMonth(), item.dateTaken.getDate());
+        const label = key === todayKey ? 'Today' : key === yesterdayKey
+          ? 'Yesterday'
+          : date.toLocaleDateString(undefined, { weekday: 'long' });
+        group = {
+          key,
+          date,
+          items: [],
+          label,
+          dateLabel: date.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }),
+          selectionState: this.groupSelectionState(key)
+        };
+        groups.set(key, group);
+      }
+      group.items.push(item);
+    }
+    this.dateGroups = Array.from(groups.values());
   }
 
   loadNextBatch() {
@@ -220,11 +321,13 @@ export class HomePage implements OnInit, OnDestroy {
     
     if (newItems.length > 0) {
       this.displayedMedia = [...this.displayedMedia, ...newItems];
+      this.rebuildVisibleDateGroups();
       this.currentBatch++;
       
       // Queue thumbnails for loading
       newItems.forEach(item => {
-        const cachedThumbnail = this.thumbnails.get(item.id);
+        if (item.source === 'local') return;
+        const cachedThumbnail = this.thumbnails.get(this.mediaKey(item));
         if (cachedThumbnail) {
           item.thumbnailUrl = cachedThumbnail;
         } else {
@@ -251,10 +354,11 @@ export class HomePage implements OnInit, OnDestroy {
       await Promise.all(
         batch.map(async (media) => {
           const mediaId = media.id;
-          if (!this.thumbnails.has(mediaId)) {
+          const cacheKey = this.mediaKey(media);
+          if (!this.thumbnails.has(cacheKey)) {
             try {
               const thumbnail = await this.mediaService.getThumbnail(mediaId, media.type);
-              this.thumbnails.set(mediaId, thumbnail);
+              this.thumbnails.set(cacheKey, thumbnail);
               media.thumbnailUrl = thumbnail;
             } catch (error) {
               console.error('Error loading thumbnail:', error);
@@ -270,6 +374,13 @@ export class HomePage implements OnInit, OnDestroy {
 
   getThumbnail(mediaId: string): string {
     return this.thumbnails.get(mediaId) || '';
+  }
+
+  formatDuration(duration?: number): string {
+    const totalSeconds = Math.max(0, Math.floor((duration || 0) / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = String(totalSeconds % 60).padStart(2, '0');
+    return `${minutes}:${seconds}`;
   }
 
   onScroll(event: any) {
@@ -304,17 +415,100 @@ export class HomePage implements OnInit, OnDestroy {
     });
   }
 
-  private mediaKey(media: MediaItemView): string {
-    return `${media.type}:${media.id}`;
+  mediaKey(media: MediaItemView): string {
+    return media.source === 'local' ? `local:${media.id}` : `${media.type}:${media.id}`;
+  }
+
+  isMediaSelected(media: MediaItemView): boolean {
+    return media.selected === true;
+  }
+
+  groupSelectionState(groupKey: string): 'none' | 'partial' | 'all' {
+    const total = this.mediaByDate.get(groupKey)?.length || 0;
+    const selected = this.selectedCountsByDate.get(groupKey) || 0;
+    if (selected === 0 || total === 0) return 'none';
+    return selected === total ? 'all' : 'partial';
+  }
+
+  toggleDateSelection(groupKey: string) {
+    const items = this.mediaByDate.get(groupKey) || [];
+    if (!items.length) return;
+    const selecting = this.groupSelectionState(groupKey) !== 'all';
+    for (const item of items) {
+      this.setItemSelected(item, selecting);
+    }
+    this.updateDateGroupState(groupKey);
+  }
+
+  private setItemSelected(item: MediaItemView, selected: boolean) {
+    const key = this.mediaKey(item);
+    if (item.selected === selected) return;
+    item.selected = selected;
+    if (selected) this.selectedMediaKeys.add(key);
+    else this.selectedMediaKeys.delete(key);
+    const dateKey = this.dateKey(item.dateTaken);
+    const count = (this.selectedCountsByDate.get(dateKey) || 0) + (selected ? 1 : -1);
+    if (count > 0) this.selectedCountsByDate.set(dateKey, count);
+    else this.selectedCountsByDate.delete(dateKey);
+  }
+
+  private updateDateGroupState(groupKey: string) {
+    const state = this.groupSelectionState(groupKey);
+    const visibleGroup = this.dateGroups.find(group => group.key === groupKey);
+    if (visibleGroup) visibleGroup.selectionState = state;
+  }
+
+  private suppressClickFor(media: MediaItemView) {
+    this.suppressMediaClickKey = this.mediaKey(media);
+    if (this.suppressMediaClickTimer) clearTimeout(this.suppressMediaClickTimer);
+    // Android normally dispatches the click immediately after pointerup. Keep
+    // suppression short and scoped to that same thumbnail so the next tap on
+    // another item is never swallowed.
+    this.suppressMediaClickTimer = setTimeout(() => {
+      this.suppressMediaClickKey = undefined;
+      this.suppressMediaClickTimer = undefined;
+    }, 250);
+  }
+
+  private rebuildSelectionCounts() {
+    this.selectedCountsByDate.clear();
+    for (const item of this.mediaItems) {
+      item.selected = this.selectedMediaKeys.has(this.mediaKey(item));
+      if (!item.selected) continue;
+      const key = this.dateKey(item.dateTaken);
+      this.selectedCountsByDate.set(key, (this.selectedCountsByDate.get(key) || 0) + 1);
+    }
+    this.dateGroups.forEach(group => group.selectionState = this.groupSelectionState(group.key));
+  }
+
+  toggleSelectAll() {
+    if (this.selectedMediaKeys.size === this.mediaItems.length) {
+      this.selectedMediaKeys.clear();
+      this.mediaItems.forEach(item => item.selected = false);
+      this.selectedCountsByDate.clear();
+      this.dateGroups.forEach(group => group.selectionState = 'none');
+    } else {
+      this.selectedMediaKeys = new Set(this.mediaItems.map(item => this.mediaKey(item)));
+      this.rebuildSelectionCounts();
+    }
+    this.selectionMode = true;
+  }
+
+  get isEverythingSelected(): boolean {
+    return this.mediaItems.length > 0 && this.selectedMediaKeys.size === this.mediaItems.length;
   }
 
   startMediaLongPress(media: MediaItemView) {
     this.cancelMediaLongPress();
     this.longPressTimer = setTimeout(() => {
       this.selectionMode = true;
-      this.selectedMediaKeys.add(this.mediaKey(media));
-      this.suppressNextMediaClick = true;
-    }, 480);
+      const key = this.mediaKey(media);
+      if (!this.selectedMediaKeys.has(key)) {
+        this.setItemSelected(media, true);
+        this.updateDateGroupState(this.dateKey(media.dateTaken));
+      }
+      this.suppressClickFor(media);
+    }, 360);
   }
 
   cancelMediaLongPress() {
@@ -325,49 +519,133 @@ export class HomePage implements OnInit, OnDestroy {
   }
 
   onMediaCardClick(media: MediaItemView) {
-    if (this.suppressNextMediaClick) {
-      this.suppressNextMediaClick = false;
+    const mediaKey = this.mediaKey(media);
+    if (this.suppressMediaClickKey === mediaKey) {
+      this.suppressMediaClickKey = undefined;
+      if (this.suppressMediaClickTimer) clearTimeout(this.suppressMediaClickTimer);
+      this.suppressMediaClickTimer = undefined;
       return;
     }
     if (this.selectionMode) {
-      const key = this.mediaKey(media);
-      this.selectedMediaKeys.has(key) ? this.selectedMediaKeys.delete(key) : this.selectedMediaKeys.add(key);
+      this.setItemSelected(media, !media.selected);
+      this.updateDateGroupState(this.dateKey(media.dateTaken));
       if (this.selectedMediaKeys.size === 0) this.selectionMode = false;
       return;
     }
-    void this.openMediaViewer(media);
+    if (media.source === 'local' && media.localPhoto) void this.openPhotoViewer(media.localPhoto);
+    else void this.openMediaViewer(media);
   }
 
   onMediaContextMenu(event: MouseEvent, media: MediaItemView) {
     event.preventDefault();
+    this.cancelMediaLongPress();
     this.selectionMode = true;
-    this.selectedMediaKeys.add(this.mediaKey(media));
+    this.suppressClickFor(media);
+    const key = this.mediaKey(media);
+    if (!this.selectedMediaKeys.has(key)) {
+      this.setItemSelected(media, true);
+      this.updateDateGroupState(this.dateKey(media.dateTaken));
+    }
   }
 
   cancelSelection() {
     this.cancelMediaLongPress();
     this.selectionMode = false;
+    this.mediaByKey.forEach(item => item.selected = false);
     this.selectedMediaKeys.clear();
+    this.selectedCountsByDate.clear();
+    this.dateGroups.forEach(group => group.selectionState = 'none');
   }
 
   async deleteSelectedMedia() {
     const selected = this.mediaItems.filter(item => this.selectedMediaKeys.has(this.mediaKey(item)));
     if (selected.length === 0) return;
 
+    const count = selected.length;
+    const alert = await this.alertController.create({
+      header: `Delete ${count} selected ${count === 1 ? 'item' : 'items'}?`,
+      message: 'This action will delete the selected photos and videos.',
+      buttons: [
+        { text: 'Cancel', role: 'cancel' },
+        { text: 'Delete', role: 'destructive' }
+      ]
+    });
+    await alert.present();
+    const { role } = await alert.onDidDismiss();
+    if (role !== 'destructive') return;
+
+    let dismissDeletingLoading: (() => Promise<void>) | undefined;
+    const dismissProgress = async () => {
+      if (!dismissDeletingLoading) return;
+      const dismiss = dismissDeletingLoading;
+      dismissDeletingLoading = undefined;
+      try { await dismiss(); } catch { /* Loading overlay may already be gone. */ }
+    };
+
     try {
-      const deleted = await this.mediaService.deleteMedia(selected);
-      if (deleted) {
+      this.isDeleting = true;
+      const deletingLoading = await this.loadingController.create({
+        message: 'Deleting selected files…',
+        spinner: 'crescent',
+        backdropDismiss: false
+      });
+      dismissDeletingLoading = async () => { await deletingLoading.dismiss(); };
+      await deletingLoading.present();
+      const deviceItems = selected.filter(item => item.source !== 'local');
+      const localItems = selected.filter(item => item.source === 'local' && item.localPhoto);
+      const deviceResult = deviceItems.length
+        ? await this.mediaService.deleteMediaDetailed(deviceItems)
+        : { deleted: true, deletedCount: 0 };
+      if (deviceItems.length > 0 && deviceResult.deletedCount === 0 && !deviceResult.deleted) {
+        // Android's system deletion consent was declined; keep selection intact.
+        return;
+      }
+      if (deviceResult.deleted || deviceResult.deletedCount > 0 || localItems.length > 0) {
+        const failedLocal: MediaItemView[] = [];
+        let deletedLocalCount = 0;
+        for (const item of localItems) {
+          try {
+            await this.photoService.deletePhoto(item.localPhoto!);
+            deletedLocalCount++;
+          } catch (error) {
+            console.error('Unable to delete saved photo:', item.id, error);
+            failedLocal.push(item);
+          }
+        }
+        this.loadLegacyPhotos();
         this.cancelSelection();
         await this.refreshMedia();
+        await dismissProgress();
+        const failedCount = failedLocal.length + (deviceItems.length - deviceResult.deletedCount);
+        if (failedCount > 0) {
+          const partialAlert = await this.alertController.create({
+            header: 'Some items could not be deleted',
+            message: `${failedCount} of ${count} selected items could not be deleted. ${deviceResult.deletedCount + deletedLocalCount} item(s) were removed. The gallery has been refreshed.`,
+            buttons: ['OK']
+          });
+          await partialAlert.present();
+        }
       }
     } catch (error) {
       console.error('Unable to delete selected media:', error);
+      try {
+        await this.mediaService.scanAllMedia({ forceRefresh: true });
+        this.loadLegacyPhotos();
+        await this.refreshMedia();
+      } catch (refreshError) {
+        console.error('Unable to refresh after a partial deletion:', refreshError);
+      }
+      await dismissProgress();
+      this.cancelSelection();
       const alert = await this.alertController.create({
         header: 'Could not delete media',
-        message: 'Android could not delete the selected item(s). Try again or check the app’s media access.',
+        message: 'Some items may have been deleted before Android reported a failure. The gallery was refreshed; review it before trying again.',
         buttons: ['OK']
       });
       await alert.present();
+    } finally {
+      await dismissProgress();
+      this.isDeleting = false;
     }
   }
 
@@ -479,14 +757,13 @@ export class HomePage implements OnInit, OnDestroy {
 
   async selectFilter(filter: MediaFilterType) {
     if (this.currentFilter === filter) return;
+    this.cancelSelection();
     this.currentFilter = filter;
     await this.refreshMedia();
   }
 
   get totalMediaCount(): number {
-    return this.activeAlbumId || this.activeAlbumName
-      ? this.mediaItems.length
-      : this.hasPermission ? this.mediaService.getTotalCount() : this.photos.length;
+    return this.mediaItems.length;
   }
 
   get isAlbumView(): boolean {
@@ -494,18 +771,20 @@ export class HomePage implements OnInit, OnDestroy {
   }
 
   get imageCount(): number {
-    return this.activeAlbumId || this.activeAlbumName
-      ? this.mediaItems.filter(item => item.type === 'image').length
-      : this.hasPermission ? this.mediaService.getImageCount() : this.photos.length;
+    return this.mediaItems.filter(item => item.type === 'image').length;
   }
 
   get videoCount(): number {
-    return this.activeAlbumId || this.activeAlbumName
-      ? this.mediaItems.filter(item => item.type === 'video').length
-      : this.hasPermission ? this.mediaService.getVideoCount() : 0;
+    return this.mediaItems.filter(item => item.type === 'video').length;
   }
 
   trackByMediaId(index: number, media: MediaItemView): string {
-    return media.id;
+    // Angular may invoke trackBy callbacks without the component as `this`.
+    // Build the stable key directly so change detection cannot crash the page.
+    return media.source === 'local' ? `local:${media.id}` : `${media.type}:${media.id}`;
+  }
+
+  trackByDateGroup(index: number, group: MediaDateGroup): string {
+    return group.key;
   }
 }

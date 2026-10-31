@@ -33,7 +33,7 @@ export interface MediaStorePlugin {
   }): Promise<{ thumbnail: string }>;
 
   /** Delete selected device media using Android's system confirmation UI. */
-  deleteMedia(options: { items: Array<{ id: string; type: 'image' | 'video' }> }): Promise<{ deleted: boolean }>;
+  deleteMedia(options: { items: Array<{ id: string; type: 'image' | 'video' }> }): Promise<{ deleted: boolean; deletedKeys?: string[] }>;
 
   /**
    * Get all albums/folders
@@ -69,6 +69,7 @@ export interface MediaItem {
   key?: string;
   name: string;
   dateTaken: number;
+  dateAdded?: number;
   size: number;
   uri: string;
   path: string;

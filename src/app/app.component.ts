@@ -9,7 +9,7 @@ import { SystemBarsService } from './services/system-bars.service';
 })
 export class AppComponent {
   constructor(private systemBars: SystemBarsService) {
-    void this.systemBars.setHidden(true);
+    void this.systemBars.setHidden(false);
   }
 
   onAppTap(event: MouseEvent) {

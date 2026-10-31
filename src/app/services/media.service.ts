@@ -149,7 +149,8 @@ export class MediaService {
     try {
       if (!options?.forceRefresh) {
         const cached = await this.loadCachedMedia();
-        if (cached.length > 0) {
+        const cachedHasAddedTimestamps = cached.length > 0 && cached.every(item => Number(item.dateAdded) > 0);
+        if (cachedHasAddedTimestamps) {
           this.mediaItems = cached;
           await this.markInitialScanComplete();
           return cached;
@@ -191,6 +192,12 @@ export class MediaService {
       return allMedia;
     } catch (error) {
       console.error('Error scanning media:', error);
+      // Keep the last known index available if a rescan fails. This is especially
+      // important on startup, where the page otherwise has nothing to render.
+      if (this.mediaItems.length === 0) {
+        const cached = await this.loadCachedMedia();
+        if (cached.length > 0) this.mediaItems = cached;
+      }
       throw error;
     } finally {
       this.isScanning = false;
@@ -203,7 +210,7 @@ export class MediaService {
     if (!(await this.checkPermissions())) return this.mediaItems;
     this.isScanning = true;
     try {
-      const newest = this.mediaItems.reduce((value, item) => Math.max(value, Number(item.dateTaken) || 0), 0);
+      const newest = this.mediaItems.reduce((value, item) => Math.max(value, Number(item.dateAdded) || Number(item.dateTaken) || 0), 0);
       const addedAfter = Math.floor(newest / 1000);
       const changed: MediaItem[] = [];
       const pageSize = 500;
@@ -297,7 +304,8 @@ export class MediaService {
    */
   async getThumbnail(mediaId: string, mediaType: 'image' | 'video'): Promise<string> {
     // Check cache first
-    const cached = this.thumbnailCache.get(mediaId);
+    const cacheKey = `${mediaType}:${mediaId}`;
+    const cached = this.thumbnailCache.get(cacheKey);
     if (cached) {
       return cached;
     }
@@ -309,7 +317,7 @@ export class MediaService {
       });
 
       // Cache the thumbnail
-      this.thumbnailCache.set(mediaId, result.thumbnail);
+      this.thumbnailCache.set(cacheKey, result.thumbnail);
       return result.thumbnail;
     } catch (error) {
       console.error('Error getting thumbnail:', error);
@@ -319,18 +327,23 @@ export class MediaService {
   }
 
   async deleteMedia(items: Array<Pick<MediaItem, 'id' | 'type'>>): Promise<boolean> {
-    if (items.length === 0) return true;
+    const result = await this.deleteMediaDetailed(items);
+    return result.deleted || result.deletedCount > 0;
+  }
+
+  async deleteMediaDetailed(items: Array<Pick<MediaItem, 'id' | 'type'>>): Promise<{ deleted: boolean; deletedCount: number }> {
+    if (items.length === 0) return { deleted: true, deletedCount: 0 };
     const result = await MediaStore.deleteMedia({
       items: items.map(({ id, type }) => ({ id, type }))
     });
-    if (!result.deleted) return false;
-
-    const deletedKeys = new Set(items.map(item => `${item.type}:${item.id}`));
-    this.mediaItems = this.mediaItems.filter(item => !deletedKeys.has(`${item.type}:${item.id}`));
-    items.forEach(item => this.thumbnailCache.delete(item.id));
-    await this.cacheMedia(this.mediaItems);
-    this.notifyMediaUpdated();
-    return true;
+    const deletedKeys = new Set(result.deletedKeys || (result.deleted ? items.map(item => `${item.type}:${item.id}`) : []));
+    if (deletedKeys.size > 0) {
+      this.mediaItems = this.mediaItems.filter(item => !deletedKeys.has(`${item.type}:${item.id}`));
+      items.filter(item => deletedKeys.has(`${item.type}:${item.id}`)).forEach(item => this.thumbnailCache.delete(`${item.type}:${item.id}`));
+      await this.cacheMedia(this.mediaItems);
+      this.notifyMediaUpdated();
+    }
+    return { deleted: result.deleted, deletedCount: deletedKeys.size };
   }
 
   /**

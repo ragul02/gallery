@@ -39,6 +39,9 @@ export interface MediaItemView {
   width: number;
   height: number;
   duration?: number;
+  source?: 'device' | 'local';
+  localPhoto?: Photo;
+  selected?: boolean;
 }
 
 export interface AlbumView {

@@ -218,13 +218,11 @@ export class PhotoService {
 
   // Delete a photo
   async deletePhoto(photo: Photo) {
-    this.photos = this.photos.filter(p => p.id !== photo.id);
-    
     await Filesystem.deleteFile({
       path: photo.filepath,
       directory: Directory.Data
     });
-
+    this.photos = this.photos.filter(p => p.id !== photo.id);
     await this.savePhotos();
   }
 

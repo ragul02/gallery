@@ -9,7 +9,8 @@ const SystemBars = registerPlugin<SystemBarsPlugin>('SystemBars');
 
 @Injectable({ providedIn: 'root' })
 export class SystemBarsService {
-  private hidden = false;
+  // MainActivity starts with the Android navigation bar hidden.
+  private hidden = true;
 
   get isHidden(): boolean {
     return this.hidden;

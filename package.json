@@ -1,6 +1,6 @@
 {
   "name": "gallery",
-  "version": "1.0.0",
+  "version": "4.0.0",
   "description": "Ionic Gallery App with Albums and Sorting",
   "main": "index.js",
   "scripts": {

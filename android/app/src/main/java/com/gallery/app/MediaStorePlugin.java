@@ -54,6 +54,7 @@ public class MediaStorePlugin extends Plugin {
         MediaStore.MediaColumns._ID,
         MediaStore.MediaColumns.DISPLAY_NAME,
         MediaStore.MediaColumns.DATE_ADDED,
+        MediaStore.Images.ImageColumns.DATE_TAKEN,
         MediaStore.MediaColumns.SIZE,
         MediaStore.MediaColumns.MIME_TYPE,
         MediaStore.MediaColumns.WIDTH,
@@ -74,7 +75,7 @@ public class MediaStorePlugin extends Plugin {
     public void deleteMedia(PluginCall call) {
         JSArray items = call.getArray("items");
         if (items == null || items.length() == 0) {
-            call.resolve(new JSObject().put("deleted", true));
+            call.resolve(new JSObject().put("deleted", true).put("deletedKeys", new JSArray()));
             return;
         }
         List<Uri> uris = new ArrayList<>();
@@ -113,7 +114,7 @@ public class MediaStorePlugin extends Plugin {
     @PermissionCallback
     private void legacyDeletePermissionCallback(PluginCall call) {
         if (getPermissionState("write") != com.getcapacitor.PermissionState.GRANTED) {
-            call.resolve(new JSObject().put("deleted", false));
+            call.resolve(new JSObject().put("deleted", false).put("deletedKeys", new JSArray()));
             pendingDeleteUris.clear();
             return;
         }
@@ -124,11 +125,11 @@ public class MediaStorePlugin extends Plugin {
     private void deleteForAndroidTen(PluginCall call, List<Uri> uris) {
         try {
             deleteUrisNow(uris);
-            call.resolve(new JSObject().put("deleted", true));
+            call.resolve(deleteResult(uris));
         } catch (android.app.RecoverableSecurityException e) {
             launchDeleteConfirmation(call, uris, e.getUserAction().getActionIntent().getIntentSender());
         } catch (Exception e) {
-            call.reject("Unable to delete selected media", e);
+            call.resolve(deleteResult(uris));
         }
     }
 
@@ -144,16 +145,16 @@ public class MediaStorePlugin extends Plugin {
         pendingDeleteCall = null;
         if (call == null) return;
         if (result.getResultCode() != Activity.RESULT_OK) {
-            call.resolve(new JSObject().put("deleted", false));
+            call.resolve(deleteResult(pendingDeleteUris));
             pendingDeleteUris.clear();
             return;
         }
         try {
             if (Build.VERSION.SDK_INT == 29) deleteUrisNow(pendingDeleteUris);
-            call.resolve(new JSObject().put("deleted", true));
         } catch (Exception e) {
-            call.reject("Unable to delete selected media", e);
+            // Report the items that were actually removed; the web layer will refresh and explain partial failures.
         } finally {
+            call.resolve(deleteResult(pendingDeleteUris));
             pendingDeleteUris.clear();
         }
     }
@@ -161,9 +162,35 @@ public class MediaStorePlugin extends Plugin {
     private void deleteUris(PluginCall call, List<Uri> uris) {
         try {
             deleteUrisNow(uris);
-            call.resolve(new JSObject().put("deleted", true));
         } catch (Exception e) {
-            call.reject("Unable to delete selected media", e);
+            // Some rows may already have been removed. Return a per-item result so the gallery can refresh safely.
+        } finally {
+            call.resolve(deleteResult(uris));
+        }
+    }
+
+    private JSObject deleteResult(List<Uri> uris) {
+        JSArray deletedKeys = new JSArray();
+        int deletedCount = 0;
+        for (Uri uri : uris) {
+            if (uriExists(uri)) continue;
+            String type = uri.toString().contains("/video/") ? "video" : "image";
+            deletedKeys.put(type + ":" + uri.getLastPathSegment());
+            deletedCount++;
+        }
+        JSObject result = new JSObject();
+        result.put("deleted", deletedCount == uris.size());
+        result.put("deletedKeys", deletedKeys);
+        result.put("deletedCount", deletedCount);
+        result.put("requestedCount", uris.size());
+        return result;
+    }
+
+    private boolean uriExists(Uri uri) {
+        try (Cursor cursor = getContext().getContentResolver().query(uri, new String[] { MediaStore.MediaColumns._ID }, null, null, null)) {
+            return cursor != null && cursor.moveToFirst();
+        } catch (Exception e) {
+            return true;
         }
     }
 
@@ -256,6 +283,7 @@ public class MediaStorePlugin extends Plugin {
                 MediaStore.MediaColumns._ID,
                 MediaStore.MediaColumns.DISPLAY_NAME,
                 MediaStore.MediaColumns.DATE_ADDED,
+                MediaStore.Images.ImageColumns.DATE_TAKEN,
                 MediaStore.MediaColumns.SIZE,
                 MediaStore.MediaColumns.MIME_TYPE,
                 MediaStore.MediaColumns.WIDTH,
@@ -269,11 +297,28 @@ public class MediaStorePlugin extends Plugin {
             : addedAfter > 0 ? MediaStore.MediaColumns.DATE_ADDED + " >= ?" : null;
         String[] selectionArgs = mediaId != null ? new String[] { mediaId }
             : addedAfter > 0 ? new String[] { Long.toString(addedAfter) } : null;
-        try (Cursor cursor = resolver.query(collection, projection, selection, selectionArgs, sort)) {
+        Cursor queriedCursor;
+        try {
+            queriedCursor = resolver.query(collection, projection, selection, selectionArgs, sort);
+        } catch (RuntimeException unsupportedDateTaken) {
+            // Some vendor MediaStore providers do not expose DATE_TAKEN for both
+            // image and video collections. Retry the legacy projection so the
+            // gallery can still load, using DATE_ADDED as its timestamp fallback.
+            String[] fallbackProjection = new String[projection.length - 1];
+            int fallbackIndex = 0;
+            for (String column : projection) {
+                if (!MediaStore.Images.ImageColumns.DATE_TAKEN.equals(column)) {
+                    fallbackProjection[fallbackIndex++] = column;
+                }
+            }
+            queriedCursor = resolver.query(collection, fallbackProjection, selection, selectionArgs, sort);
+        }
+        try (Cursor cursor = queriedCursor) {
             if (cursor == null) return;
             int idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID);
             int nameCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME);
             int dateCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED);
+            int dateTakenCol = cursor.getColumnIndex(MediaStore.Images.ImageColumns.DATE_TAKEN);
             int sizeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE);
             int widthCol = cursor.getColumnIndex(MediaStore.MediaColumns.WIDTH);
             int heightCol = cursor.getColumnIndex(MediaStore.MediaColumns.HEIGHT);
@@ -294,7 +339,10 @@ public class MediaStorePlugin extends Plugin {
                 item.put("id", Long.toString(id));
                 item.put("key", kind + ":" + id);
                 item.put("name", cursor.getString(nameCol));
-                item.put("dateTaken", cursor.getLong(dateCol) * 1000L);
+                long dateAdded = cursor.getLong(dateCol) * 1000L;
+                long dateTaken = dateTakenCol >= 0 ? cursor.getLong(dateTakenCol) : 0L;
+                item.put("dateTaken", dateTaken > 0 ? dateTaken : dateAdded);
+                item.put("dateAdded", dateAdded);
                 item.put("size", cursor.getLong(sizeCol));
                 item.put("uri", itemUri.toString());
                 item.put("path", itemUri.toString());
