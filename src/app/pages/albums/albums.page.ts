@@ -4,6 +4,7 @@ import { AlertController } from '@ionic/angular';
 import { PhotoService } from '../../services/photo.service';
 import { MediaService } from '../../services/media.service';
 import { Album, AlbumView } from '../../models/gallery.model';
+import { FavoriteService } from '../../services/favorite.service';
 
 @Component({
   selector: 'app-albums',
@@ -12,6 +13,7 @@ import { Album, AlbumView } from '../../models/gallery.model';
   standalone: false
 })
 export class AlbumsPage implements OnInit {
+  private unsubscribeFavorites?: () => void;
   // Legacy custom albums
   customAlbums: Album[] = [];
   
@@ -29,12 +31,16 @@ export class AlbumsPage implements OnInit {
     private photoService: PhotoService,
     private mediaService: MediaService,
     private alertController: AlertController,
-    private router: Router
+    private router: Router,
+    private favoriteService: FavoriteService
   ) {}
 
   async ngOnInit() {
+    this.unsubscribeFavorites = this.favoriteService.subscribe(() => { void this.loadAlbums(); });
     await this.initialize();
   }
+
+  ngOnDestroy() { this.unsubscribeFavorites?.(); }
 
   async ionViewWillEnter() {
     if (this.hasPermission) {
@@ -52,6 +58,7 @@ export class AlbumsPage implements OnInit {
 
   async loadAlbums() {
     this.isLoading = true;
+    await this.favoriteService.whenReady();
 
     // Load custom albums (legacy)
     this.customAlbums = this.photoService.getAlbums();
@@ -87,7 +94,16 @@ export class AlbumsPage implements OnInit {
         );
 
         // Combine both types
+        const favorites = this.mediaService.getMedia().filter(item => this.favoriteService.isFavoriteSync(item.id, item.type));
+        const localFavorites = this.photoService.getPhotos().filter(photo => this.favoriteService.isFavoriteSync(photo.id, 'local'));
+        const favoriteCover = favorites[0];
+        let favoriteCoverThumbnail = localFavorites[0]?.webviewPath;
+        if (favoriteCover) {
+          try { favoriteCoverThumbnail = await this.mediaService.getThumbnail(favoriteCover.id, favoriteCover.type); }
+          catch { favoriteCoverThumbnail = undefined; }
+        }
         this.allAlbums = [
+          { id: 'favorites', name: 'Favorites', count: favorites.length + localFavorites.length, coverThumbnail: favoriteCoverThumbnail, type: 'auto' as const },
           ...this.autoAlbums,
           ...this.customAlbums.map(album => ({
             id: album.id,
@@ -100,23 +116,25 @@ export class AlbumsPage implements OnInit {
       } catch (error) {
         console.error('Error loading auto albums:', error);
         // Fall back to custom albums only
-        this.allAlbums = this.customAlbums.map(album => ({
+        const favoritePhotos = this.photoService.getPhotos().filter(photo => this.favoriteService.isFavoriteSync(photo.id, 'local'));
+        this.allAlbums = [{ id: 'favorites', name: 'Favorites', count: favoritePhotos.length, coverThumbnail: favoritePhotos[0]?.webviewPath, type: 'auto' as const }, ...this.customAlbums.map(album => ({
           id: album.id,
           name: album.name,
           count: album.photoCount,
           coverThumbnail: album.coverPhoto,
           type: 'custom' as const
-        }));
+        }))];
       }
     } else {
       // Only show custom albums
-      this.allAlbums = this.customAlbums.map(album => ({
+      const favoritePhotos = this.photoService.getPhotos().filter(photo => this.favoriteService.isFavoriteSync(photo.id, 'local'));
+      this.allAlbums = [{ id: 'favorites', name: 'Favorites', count: favoritePhotos.length, coverThumbnail: favoritePhotos[0]?.webviewPath, type: 'auto' as const }, ...this.customAlbums.map(album => ({
         id: album.id,
         name: album.name,
         count: album.photoCount,
         coverThumbnail: album.coverPhoto,
         type: 'custom' as const
-      }));
+      }))];
     }
 
     this.isLoading = false;
@@ -153,6 +171,10 @@ export class AlbumsPage implements OnInit {
   }
 
   openAlbum(album: AlbumView) {
+    if (album.id === 'favorites') {
+      this.router.navigate(['/home'], { queryParams: { favorites: 'true' } });
+      return;
+    }
     if (album.type === 'auto') {
       // Navigate to home with filter
       this.router.navigate(['/home'], {

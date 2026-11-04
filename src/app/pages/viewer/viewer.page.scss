@@ -22,10 +22,14 @@
   ion-buttons { flex: 0 0 auto; }
   .toolbar-action { --color: #555969; --border-radius: 14px; width: 46px; height: 46px; font-size: 25px; }
   .toolbar-action ion-icon { font-size: 25px; }
+  .favorite-action { --color: #777b89; transition: transform .18s ease, color .18s ease; }
+  .favorite-action.is-favorite { --color: #e54866; animation: favorite-pop .2s ease-out; }
   .viewer-brand { width: 34px; height: 34px; }
   .viewer-nav-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   small { display: block; margin-top: 2px; color: #777b89; font-size: 11px; font-weight: 500; }
 }
+
+@keyframes favorite-pop { 50% { transform: scale(1.2); } }
 
 .viewer-stage {
   position: absolute;
@@ -37,6 +41,7 @@
     radial-gradient(ellipse at 50% 45%, rgba(37, 39, 51, 0.48), transparent 66%),
     #08090d;
   touch-action: pan-y;
+  overscroll-behavior: contain;
 }
 
 .media-content {
@@ -46,6 +51,14 @@
   object-fit: contain;
   user-select: none;
   -webkit-user-select: none;
+  transform-origin: center center;
+  will-change: transform;
+}
+
+.zoomable-image {
+  touch-action: none;
+  -webkit-user-drag: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .video-content {

@@ -1,4 +1,4 @@
-import { Component, OnInit, ViewChild } from '@angular/core';
+import { Component, ElementRef, NgZone, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { Capacitor } from '@capacitor/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ActionSheetController, AlertController } from '@ionic/angular';
@@ -8,6 +8,7 @@ import { MediaItem } from '../../plugins/media-store.plugin';
 import { Photo } from '../../models/gallery.model';
 import { SystemBarsService } from '../../services/system-bars.service';
 import { ImageCropperComponent, LoadedImage } from 'ngx-image-cropper';
+import { FavoriteService } from '../../services/favorite.service';
 
 @Component({
   selector: 'app-viewer',
@@ -15,7 +16,7 @@ import { ImageCropperComponent, LoadedImage } from 'ngx-image-cropper';
   styleUrls: ['./viewer.page.scss'],
   standalone: false
 })
-export class ViewerPage implements OnInit {
+export class ViewerPage implements OnInit, OnDestroy {
   currentMedia: MediaItem | null = null;
   currentPhoto: Photo | null = null;
   allMedia: MediaItem[] = [];
@@ -32,6 +33,9 @@ export class ViewerPage implements OnInit {
   editorImageWidth = 0;
   editorImageHeight = 0;
   @ViewChild(ImageCropperComponent) imageCropper?: ImageCropperComponent;
+  @ViewChild('viewerStage') set viewerStage(element: ElementRef<HTMLElement> | undefined) {
+    this.bindStage(element?.nativeElement);
+  }
   readonly filters = [
     { id: 'original', label: 'Original', css: 'none' },
     { id: 'mono', label: 'Mono', css: 'grayscale(1)' },
@@ -46,9 +50,30 @@ export class ViewerPage implements OnInit {
     { id: '16:9', label: '16:9' },
     { id: 'free', label: 'Free crop' }
   ];
-  private touchStartX = 0;
-  private touchStartY = 0;
-  private suppressClickAfterSwipe = false;
+  private boundStage?: HTMLElement;
+  private readonly pointers = new Map<number, { x: number; y: number }>();
+  private pointerMode: 'idle' | 'pan' | 'pinch' = 'idle';
+  private hadMultiTouch = false;
+  private startX = 0;
+  private startY = 0;
+  private startTx = 0;
+  private startTy = 0;
+  private startScale = 1;
+  private pinchStartDistance = 0;
+  private pinchAnchorX = 0;
+  private pinchAnchorY = 0;
+  private lastTapAt = 0;
+  private lastTapX = 0;
+  private lastTapY = 0;
+  private scale = 1;
+  private translateX = 0;
+  private translateY = 0;
+  private readonly maxZoom = 5;
+  private readonly pointerDownListener = (event: PointerEvent) => this.onPointerDown(event);
+  private readonly pointerMoveListener = (event: PointerEvent) => this.onPointerMove(event);
+  private readonly pointerUpListener = (event: PointerEvent) => this.onPointerUp(event);
+  private readonly pointerCancelListener = (event: PointerEvent) => this.onPointerCancel(event);
+  private readonly lostPointerCaptureListener = (event: PointerEvent) => this.onPointerCancel(event);
 
   constructor(
     private route: ActivatedRoute,
@@ -57,8 +82,12 @@ export class ViewerPage implements OnInit {
     private photoService: PhotoService,
     private actionSheetController: ActionSheetController,
     private alertController: AlertController,
-    private systemBars: SystemBarsService
+    private systemBars: SystemBarsService,
+    public favoriteService: FavoriteService,
+    private zone: NgZone
   ) {}
+
+  ngOnDestroy() { this.bindStage(undefined); }
 
   ionViewWillEnter() {
     void this.systemBars.setHidden(true);
@@ -68,6 +97,8 @@ export class ViewerPage implements OnInit {
     const mediaId = this.route.snapshot.paramMap.get('id');
     const filter = this.route.snapshot.queryParamMap.get('filter');
     const album = this.route.snapshot.queryParamMap.get('album');
+    const favoritesOnly = this.route.snapshot.queryParamMap.get('favorites') === 'true';
+    await this.favoriteService.whenReady();
 
     if (!mediaId) {
       this.router.navigate(['/home']);
@@ -76,7 +107,7 @@ export class ViewerPage implements OnInit {
 
     if (this.route.snapshot.queryParamMap.get('source') === 'local') {
       await this.photoService.whenReady();
-      this.localPhotos = this.photoService.getPhotos();
+      this.localPhotos = this.photoService.getPhotos().filter(photo => !favoritesOnly || this.favoriteService.isFavoriteSync(photo.id, 'local'));
       const photoIndex = this.localPhotos.findIndex(photo => photo.id === mediaId);
       if (photoIndex < 0) {
         await this.router.navigate(['/home']);
@@ -90,6 +121,7 @@ export class ViewerPage implements OnInit {
     // Get all media with filters
     const mediaFilter = album ? { album } : (filter ? { type: filter as any } : undefined);
     this.allMedia = this.mediaService.getMedia(mediaFilter, MediaSortType.DATE_DESC);
+    if (favoritesOnly) this.allMedia = this.allMedia.filter(item => this.favoriteService.isFavoriteSync(item.id, item.type));
     
     // Find current media
     this.currentIndex = this.allMedia.findIndex(m => m.id === mediaId);
@@ -108,6 +140,7 @@ export class ViewerPage implements OnInit {
     }
 
     this.currentIndex = index;
+    this.resetZoom(false);
     this.currentPhoto = null;
     this.currentMedia = this.allMedia[index];
     this.playbackError = false;
@@ -137,27 +170,226 @@ export class ViewerPage implements OnInit {
     }
 
     this.currentIndex = index;
+    this.resetZoom(false);
     this.currentPhoto = this.localPhotos[index];
     this.currentMedia = null;
     this.thumbnailUrl = this.currentPhoto.webviewPath || '';
   }
 
-  onTouchStart(event: TouchEvent) {
-    if (event.touches.length !== 1) return;
-    this.touchStartX = event.touches[0].clientX;
-    this.touchStartY = event.touches[0].clientY;
+  get currentIsFavorite(): boolean {
+    if (this.currentPhoto) return this.favoriteService.isFavoriteSync(this.currentPhoto.id, 'local');
+    return !!this.currentMedia && this.favoriteService.isFavoriteSync(this.currentMedia.id, this.currentMedia.type);
   }
 
-  onTouchEnd(event: TouchEvent) {
-    if (event.changedTouches.length !== 1) return;
-    const deltaX = event.changedTouches[0].clientX - this.touchStartX;
-    const deltaY = event.changedTouches[0].clientY - this.touchStartY;
-    if (Math.abs(deltaX) < 65 || Math.abs(deltaY) > 85) return;
+  async toggleFavorite(event?: Event) {
+    event?.stopPropagation();
+    const item = this.currentMedia;
+    const photo = this.currentPhoto;
+    if (!item && !photo) return;
+    await this.favoriteService.toggle(item?.id || photo!.id, item?.type || 'local');
+    if (this.route.snapshot.queryParamMap.get('favorites') === 'true' && !this.currentIsFavorite) {
+      if (photo) {
+        this.localPhotos.splice(this.currentIndex, 1);
+        if (this.localPhotos.length) this.loadLocalPhoto(Math.min(this.currentIndex, this.localPhotos.length - 1));
+        else await this.close();
+      } else if (item) {
+        this.allMedia.splice(this.currentIndex, 1);
+        if (this.allMedia.length) await this.loadMedia(Math.min(this.currentIndex, this.allMedia.length - 1));
+        else await this.close();
+      }
+    }
+  }
 
-    this.suppressClickAfterSwipe = true;
-    if (deltaX < 0) void this.nextMedia();
-    else void this.previousMedia();
-    setTimeout(() => this.suppressClickAfterSwipe = false, 350);
+  get isZoomed(): boolean { return this.scale > 1.01; }
+
+  resetZoom(animate = true) {
+    this.scale = 1;
+    this.translateX = 0;
+    this.translateY = 0;
+    this.applyImageTransform(animate);
+  }
+
+  private bindStage(stage?: HTMLElement) {
+    if (this.boundStage === stage) return;
+    this.unbindStage();
+    if (!stage) return;
+    this.boundStage = stage;
+    this.zone.runOutsideAngular(() => {
+      stage.addEventListener('pointerdown', this.pointerDownListener, { passive: false });
+      stage.addEventListener('pointermove', this.pointerMoveListener, { passive: false });
+      stage.addEventListener('pointerup', this.pointerUpListener, { passive: false });
+      stage.addEventListener('pointercancel', this.pointerCancelListener, { passive: false });
+      stage.addEventListener('lostpointercapture', this.lostPointerCaptureListener);
+    });
+  }
+
+  private unbindStage() {
+    if (!this.boundStage) return;
+    const stage = this.boundStage;
+    stage.removeEventListener('pointerdown', this.pointerDownListener);
+    stage.removeEventListener('pointermove', this.pointerMoveListener);
+    stage.removeEventListener('pointerup', this.pointerUpListener);
+    stage.removeEventListener('pointercancel', this.pointerCancelListener);
+    stage.removeEventListener('lostpointercapture', this.lostPointerCaptureListener);
+    this.pointers.clear();
+    this.pointerMode = 'idle';
+    this.boundStage = undefined;
+  }
+
+  private onPointerDown(event: PointerEvent) {
+    if (!this.boundStage || event.button !== 0) return;
+    const imageTarget = (event.target as HTMLElement).closest('.zoomable-image');
+    const isImage = !!imageTarget && this.isImageMedia;
+    // Leave native video controls and playback gestures untouched.
+    if (!isImage) return;
+    event.preventDefault();
+    this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    try { this.boundStage.setPointerCapture(event.pointerId); } catch { /* The pointer may already have been released. */ }
+    if (this.pointers.size >= 2 && isImage) {
+      this.hadMultiTouch = true;
+      this.pointerMode = 'pinch';
+      this.lastTapAt = 0;
+      this.beginPinch();
+      return;
+    }
+    if (this.pointers.size === 1) {
+      this.pointerMode = this.scale > 1.01 ? 'pan' : 'idle';
+      this.startX = event.clientX;
+      this.startY = event.clientY;
+      this.startTx = this.translateX;
+      this.startTy = this.translateY;
+    }
+  }
+
+  private onPointerMove(event: PointerEvent) {
+    if (!this.pointers.has(event.pointerId) || !this.boundStage) return;
+    event.preventDefault();
+    this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (this.pointerMode === 'pinch' && this.pointers.size >= 2) {
+      const [a, b] = Array.from(this.pointers.values());
+      const distance = Math.hypot(b.x - a.x, b.y - a.y);
+      const centerX = (a.x + b.x) / 2 - this.stageCenterX();
+      const centerY = (a.y + b.y) / 2 - this.stageCenterY();
+      const nextScale = Math.min(this.maxZoom, Math.max(1, this.startScale * distance / Math.max(1, this.pinchStartDistance)));
+      this.scale = nextScale;
+      this.translateX = centerX - this.pinchAnchorX * nextScale;
+      this.translateY = centerY - this.pinchAnchorY * nextScale;
+      this.constrainPan();
+      this.applyImageTransform(false);
+    } else if (this.pointerMode === 'pan' && this.scale > 1.01) {
+      this.translateX = this.startTx + event.clientX - this.startX;
+      this.translateY = this.startTy + event.clientY - this.startY;
+      this.constrainPan();
+      this.applyImageTransform(false);
+    }
+  }
+
+  private onPointerUp(event: PointerEvent) {
+    if (!this.pointers.has(event.pointerId)) return;
+    const wasPinching = this.pointerMode === 'pinch' || this.hadMultiTouch;
+    this.pointers.delete(event.pointerId);
+    if (this.pointers.size > 0) {
+      if (this.pointers.size === 1 && this.pointerMode === 'pinch') {
+        const remaining = Array.from(this.pointers.values())[0];
+        this.pointerMode = this.scale > 1.01 ? 'pan' : 'idle';
+        this.startX = remaining.x;
+        this.startY = remaining.y;
+        this.startTx = this.translateX;
+        this.startTy = this.translateY;
+      }
+      return;
+    }
+    this.pointerMode = 'idle';
+    if (wasPinching) {
+      this.hadMultiTouch = false;
+      this.constrainPan();
+      this.applyImageTransform(true);
+      return;
+    }
+
+    const deltaX = event.clientX - this.startX;
+    const deltaY = event.clientY - this.startY;
+    if (this.scale <= 1.01 && Math.abs(deltaX) >= 58 && Math.abs(deltaY) < 100) {
+      this.lastTapAt = 0;
+      this.zone.run(() => { if (deltaX < 0) void this.nextMedia(); else void this.previousMedia(); });
+      return;
+    }
+    if (Math.abs(deltaX) < 18 && Math.abs(deltaY) < 18 && this.isImageMedia) this.handleTap(event.clientX, event.clientY);
+    if (this.scale <= 1.01) this.resetZoom(false);
+    else { this.constrainPan(); this.applyImageTransform(true); }
+  }
+
+  private onPointerCancel(event: PointerEvent) {
+    if (!this.pointers.has(event.pointerId)) return;
+    this.pointers.delete(event.pointerId);
+    if (!this.pointers.size) {
+      this.pointerMode = 'idle';
+      this.hadMultiTouch = false;
+      this.constrainPan();
+      this.applyImageTransform(true);
+    }
+  }
+
+  private beginPinch() {
+    const [a, b] = Array.from(this.pointers.values());
+    this.pinchStartDistance = Math.hypot(b.x - a.x, b.y - a.y);
+    this.startScale = this.scale;
+    this.startTx = this.translateX;
+    this.startTy = this.translateY;
+    const centerX = (a.x + b.x) / 2 - this.stageCenterX();
+    const centerY = (a.y + b.y) / 2 - this.stageCenterY();
+    this.pinchAnchorX = (centerX - this.translateX) / this.scale;
+    this.pinchAnchorY = (centerY - this.translateY) / this.scale;
+  }
+
+  private handleTap(x: number, y: number) {
+    const now = performance.now();
+    if (now - this.lastTapAt < 320 && Math.hypot(x - this.lastTapX, y - this.lastTapY) < 32) {
+      this.lastTapAt = 0;
+      if (this.scale > 1.01) this.resetZoom(true);
+      else this.zoomTo(2, x, y);
+    } else {
+      this.lastTapAt = now;
+      this.lastTapX = x;
+      this.lastTapY = y;
+    }
+  }
+
+  private zoomTo(scale: number, x: number, y: number) {
+    const focalX = x - this.stageCenterX();
+    const focalY = y - this.stageCenterY();
+    const imageX = (focalX - this.translateX) / this.scale;
+    const imageY = (focalY - this.translateY) / this.scale;
+    this.scale = Math.max(1, Math.min(this.maxZoom, scale));
+    this.translateX = focalX - imageX * this.scale;
+    this.translateY = focalY - imageY * this.scale;
+    this.constrainPan();
+    this.applyImageTransform(true);
+  }
+
+  private stageCenterX(): number { return this.boundStage ? this.boundStage.getBoundingClientRect().left + this.boundStage.clientWidth / 2 : 0; }
+  private stageCenterY(): number { return this.boundStage ? this.boundStage.getBoundingClientRect().top + this.boundStage.clientHeight / 2 : 0; }
+
+  private constrainPan() {
+    const image = this.boundStage?.querySelector<HTMLImageElement>('.zoomable-image');
+    if (!image || !this.boundStage) return;
+    const maxX = Math.max(0, (image.offsetWidth * this.scale - this.boundStage.clientWidth) / 2);
+    const maxY = Math.max(0, (image.offsetHeight * this.scale - this.boundStage.clientHeight) / 2);
+    this.translateX = Math.max(-maxX, Math.min(maxX, this.translateX));
+    this.translateY = Math.max(-maxY, Math.min(maxY, this.translateY));
+    if (this.scale <= 1.001) { this.translateX = 0; this.translateY = 0; this.scale = 1; }
+  }
+
+  private applyImageTransform(animate: boolean) {
+    const image = this.boundStage?.querySelector<HTMLImageElement>('.zoomable-image');
+    if (!image) return;
+    image.style.transition = animate ? 'transform 220ms cubic-bezier(.2,.75,.25,1)' : 'none';
+    image.style.transform = `translate3d(${this.translateX}px, ${this.translateY}px, 0) scale(${this.scale})`;
+  }
+
+  onImageLoaded() {
+    this.resetZoom(false);
+    requestAnimationFrame(() => this.constrainPan());
   }
 
   onVideoError() {

@@ -221,6 +221,22 @@
   }
 }
 
+.favorite-indicator {
+  position: absolute;
+  z-index: 2;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(20, 20, 25, .62);
+  pointer-events: none;
+  ion-icon { color: #ff607a; font-size: 15px; }
+}
+
 .loading-state {
   display: flex;
   min-height: 180px;

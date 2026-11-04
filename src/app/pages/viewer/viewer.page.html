@@ -10,6 +10,12 @@
       <div class="viewer-nav-title">{{ currentPhoto?.name || currentMedia?.name || 'Media' }}<small>{{ mediaCounter }}</small></div>
     </ion-title>
     <ion-buttons slot="end">
+      <ion-button *ngIf="!isEditing" class="toolbar-action favorite-action" [class.is-favorite]="currentIsFavorite" [attr.aria-label]="currentIsFavorite ? 'Remove from favorites' : 'Add to favorites'" [attr.aria-pressed]="currentIsFavorite" (click)="toggleFavorite($event)">
+        <ion-icon slot="icon-only" [name]="currentIsFavorite ? 'heart' : 'heart-outline'"></ion-icon>
+      </ion-button>
+      <ion-button *ngIf="isImageMedia && !isEditing" class="toolbar-action" aria-label="Reset zoom" title="Reset zoom" (click)="resetZoom()">
+        <ion-icon slot="icon-only" name="scan-outline"></ion-icon>
+      </ion-button>
       <ion-button *ngIf="isImageMedia && !isEditing" class="toolbar-action" aria-label="Edit photo" (click)="startEditing()">
         <ion-icon slot="icon-only" name="create-outline"></ion-icon>
       </ion-button>
@@ -24,21 +30,24 @@
 </ion-header>
 
 <ion-content class="viewer-content" [class.editor-open]="isEditing">
-  <main class="viewer-stage" *ngIf="!isEditing" (touchstart)="onTouchStart($event)" (touchend)="onTouchEnd($event)">
+  <main #viewerStage class="viewer-stage" *ngIf="!isEditing">
     <img
       *ngIf="currentPhoto"
       [src]="currentPhoto.webviewPath"
       [alt]="currentPhoto.name"
       class="media-content"
+      [class.zoomable-image]="true"
       draggable="false"
+      (load)="onImageLoaded()"
     />
 
     <img
       *ngIf="currentMedia?.type === 'image'"
       [src]="mediaSourceUrl"
       [alt]="currentMedia.name"
-      class="media-content"
+      class="media-content zoomable-image"
       draggable="false"
+      (load)="onImageLoaded()"
       (error)="onFullImageError()"
     />
 

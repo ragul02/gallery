@@ -69,6 +69,7 @@
             [attr.aria-pressed]="selectionMode ? media.selected : null">
             <img *ngIf="media.thumbnailUrl" [src]="media.thumbnailUrl" [alt]="media.name" loading="lazy" />
             <span class="thumbnail-placeholder" *ngIf="!media.thumbnailUrl"><ion-spinner name="crescent"></ion-spinner></span>
+            <span class="favorite-indicator" *ngIf="isFavorite(media)" aria-label="Favorite"><ion-icon name="heart"></ion-icon></span>
             <span class="selected-wash" [class.active]="media.selected"></span>
             <span class="selection-check">
               <ion-icon [name]="media.selected ? 'checkmark-circle' : 'ellipse-outline'"></ion-icon>
@@ -92,10 +93,10 @@
     </section>
 
     <section class="empty-card" *ngIf="!isLoading && hasPermission && mediaItems.length === 0">
-      <div class="empty-icon"><ion-icon name="images-outline"></ion-icon></div>
-      <h2>{{ isAlbumView ? 'No media in this album' : currentFilter === MediaFilterType.VIDEOS ? 'No videos yet' : 'No photos yet' }}</h2>
-      <p>{{ isAlbumView ? 'This folder does not contain any accessible media.' : 'Your device gallery is empty. Add a photo or refresh the media list.' }}</p>
-      <ion-button *ngIf="!isAlbumView" fill="outline" shape="round" (click)="scanDeviceMedia()">
+      <div class="empty-icon"><ion-icon [name]="router.routerState.snapshot.root.queryParams['favorites'] === 'true' ? 'heart-outline' : 'images-outline'"></ion-icon></div>
+      <h2>{{ router.routerState.snapshot.root.queryParams['favorites'] === 'true' ? 'No favorites yet' : isAlbumView ? 'No media in this album' : currentFilter === MediaFilterType.VIDEOS ? 'No videos yet' : 'No photos yet' }}</h2>
+      <p>{{ router.routerState.snapshot.root.queryParams['favorites'] === 'true' ? 'Tap the heart on a photo or video to add it here.' : isAlbumView ? 'This folder does not contain any accessible media.' : 'Your device gallery is empty. Add a photo or refresh the media list.' }}</p>
+      <ion-button *ngIf="!isAlbumView && router.routerState.snapshot.root.queryParams['favorites'] !== 'true'" fill="outline" shape="round" (click)="scanDeviceMedia()">
         <ion-icon slot="start" name="refresh-outline"></ion-icon>Refresh media
       </ion-button>
     </section>

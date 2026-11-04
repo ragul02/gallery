@@ -6,6 +6,7 @@ import { MediaService, MediaSortType, MediaFilter } from '../../services/media.s
 import { Photo, SortType, MediaItemView, MediaFilterType } from '../../models/gallery.model';
 import { MediaItem } from '../../plugins/media-store.plugin';
 import { SystemBarsService } from '../../services/system-bars.service';
+import { FavoriteService } from '../../services/favorite.service';
 
 interface MediaDateGroup {
   key: string;
@@ -24,6 +25,7 @@ interface MediaDateGroup {
 })
 export class HomePage implements OnInit, OnDestroy {
   private unsubscribeMediaUpdates?: () => void;
+  private unsubscribeFavorites?: () => void;
   private skipNextViewEntry = true;
   // Legacy photos from PhotoService
   photos: Photo[] = [];
@@ -66,17 +68,23 @@ export class HomePage implements OnInit, OnDestroy {
     private alertController: AlertController,
     private loadingController: LoadingController,
     public router: Router,
-    private systemBars: SystemBarsService
+    private systemBars: SystemBarsService,
+    public favoriteService: FavoriteService
   ) {}
 
   async ngOnInit() {
     console.log('🔵 HomePage: ngOnInit called');
     this.unsubscribeMediaUpdates = this.mediaService.subscribeMediaUpdated(() => { void this.refreshMedia(); });
+    this.unsubscribeFavorites = this.favoriteService.subscribe(() => {
+      if (this.router.routerState.snapshot.root.queryParams['favorites']) void this.loadMediaFromStore();
+    });
+    await this.favoriteService.whenReady();
     await this.initializeGallery();
   }
 
   ngOnDestroy() {
     this.unsubscribeMediaUpdates?.();
+    this.unsubscribeFavorites?.();
     this.cancelMediaLongPress();
     if (this.suppressMediaClickTimer) clearTimeout(this.suppressMediaClickTimer);
   }
@@ -94,6 +102,14 @@ export class HomePage implements OnInit, OnDestroy {
 
     // Check for album filter from query params
     const albumFilter = this.router.routerState.snapshot.root.queryParams['album'];
+    const favoritesFilter = this.router.routerState.snapshot.root.queryParams['favorites'] === 'true';
+    if (favoritesFilter) {
+      this.activeAlbumName = '';
+      this.activeAlbumId = '';
+      this.currentFilter = MediaFilterType.ALL;
+      await this.loadMediaFromStore();
+      return;
+    }
     if (albumFilter) {
       this.activeAlbumName = albumFilter;
       this.activeAlbumId = this.router.routerState.snapshot.root.queryParams['albumId'] || '';
@@ -247,18 +263,23 @@ export class HomePage implements OnInit, OnDestroy {
     this.thumbnailQueue = [];
 
     try {
+      const favoritesOnly = this.router.routerState.snapshot.root.queryParams['favorites'] === 'true';
       const filter: MediaFilter = {
         type: this.currentFilter === MediaFilterType.ALL ? undefined : this.currentFilter,
         album: albumName,
         albumId
       };
 
-      const allMedia = this.hasPermission ? this.mediaService.getMedia(filter, this.currentSort) : [];
+      let allMedia = this.hasPermission ? this.mediaService.getMedia(filter, this.currentSort) : [];
+      if (favoritesOnly) allMedia = allMedia.filter(item => this.favoriteService.isFavoriteSync(item.id, item.type));
       
       // Convert to view models
       this.mediaItems = allMedia.map(item => this.convertToViewModel(item));
       if (!albumName && !albumId && this.currentFilter !== MediaFilterType.VIDEOS) {
-        this.mediaItems.push(...this.photos.map(photo => this.convertLocalPhoto(photo)));
+        const photos = favoritesOnly
+          ? this.photos.filter(photo => this.favoriteService.isFavoriteSync(photo.id, 'local'))
+          : this.photos;
+        this.mediaItems.push(...photos.map(photo => this.convertLocalPhoto(photo)));
       }
       this.mediaItems.sort((a, b) => b.dateTaken.getTime() - a.dateTaken.getTime());
       this.mediaByKey.clear();
@@ -450,20 +471,25 @@ export class HomePage implements OnInit, OnDestroy {
 
   openPhotoViewer(photo: Photo) {
     this.router.navigate(['/viewer', photo.id], {
-      queryParams: { source: 'local' }
+      queryParams: { source: 'local', favorites: this.router.routerState.snapshot.root.queryParams['favorites'] || null }
     });
   }
 
   async openMediaViewer(media: MediaItemView) {
     this.router.navigate(['/viewer', media.id], {
       queryParams: {
-        filter: this.currentFilter !== MediaFilterType.ALL ? this.currentFilter : null
+        filter: this.currentFilter !== MediaFilterType.ALL ? this.currentFilter : null,
+        favorites: this.router.routerState.snapshot.root.queryParams['favorites'] || null
       }
     });
   }
 
   mediaKey(media: MediaItemView): string {
     return media.source === 'local' ? `local:${media.id}` : `${media.type}:${media.id}`;
+  }
+
+  isFavorite(media: MediaItemView): boolean {
+    return this.favoriteService.isFavoriteSync(media.id, media.source === 'local' ? 'local' : media.type);
   }
 
   isMediaSelected(media: MediaItemView): boolean {
