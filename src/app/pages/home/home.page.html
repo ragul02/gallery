@@ -5,10 +5,15 @@
         <ion-icon slot="icon-only" name="close-outline"></ion-icon>
       </ion-button>
     </ion-buttons>
-    <div class="brand-mark" slot="start" aria-hidden="true" *ngIf="!selectionMode">
+    <ion-buttons slot="start" *ngIf="!selectionMode && (isAlbumView || isFavoritesView)">
+      <ion-button class="toolbar-action" aria-label="Back to albums" (click)="returnToAlbums()">
+        <ion-icon slot="icon-only" name="arrow-back-outline"></ion-icon>
+      </ion-button>
+    </ion-buttons>
+    <div class="brand-mark" slot="start" aria-hidden="true" *ngIf="!selectionMode && !isAlbumView && !isFavoritesView">
       <ion-icon name="images"></ion-icon>
     </div>
-    <ion-title>{{ selectionMode ? selectedMediaKeys.size + ' selected' : (isAlbumView ? activeAlbumName : 'Gallery') }}</ion-title>
+    <ion-title>{{ selectionMode ? selectedMediaKeys.size + ' selected' : (isAlbumView ? activeAlbumName : isFavoritesView ? 'Favorites' : 'Gallery') }}</ion-title>
     <ion-buttons slot="end" *ngIf="!selectionMode">
       <ion-button class="toolbar-action" aria-label="Refresh gallery" (click)="scanDeviceMedia(false, true)">
         <ion-icon slot="icon-only" name="refresh-outline"></ion-icon>
@@ -29,6 +34,15 @@
 </ion-header>
 
 <ion-content class="gallery-content" [scrollEvents]="true" (ionScroll)="onScroll($event)" data-keep-system-bars>
+  <ion-refresher slot="fixed" (ionRefresh)="refreshGallery($event)">
+    <ion-refresher-content
+      pullingIcon="arrow-down-circle-outline"
+      pullingText="Pull to refresh"
+      refreshingSpinner="circles"
+      refreshingText="Refreshing photos and videos...">
+    </ion-refresher-content>
+  </ion-refresher>
+
   <main class="gallery-page" [class.selection-mode]="selectionMode">
     <!-- <div class="gallery-summary" *ngIf="hasPermission && !selectionMode">
       <span><strong>{{ totalMediaCount }}</strong> {{ totalMediaCount === 1 ? 'item' : 'items' }}</span>
@@ -103,22 +117,22 @@
   </main>
 
   <nav class="bottom-navigation" slot="fixed" aria-label="Gallery media views">
-    <button type="button" class="bottom-nav-item" [class.active]="currentFilter === MediaFilterType.ALL"
-      [attr.aria-current]="currentFilter === MediaFilterType.ALL ? 'page' : null" (click)="selectFilter(MediaFilterType.ALL)">
+    <button type="button" class="bottom-nav-item" [class.active]="currentFilter === MediaFilterType.ALL && !isAlbumView && !isFavoritesView"
+      [attr.aria-current]="currentFilter === MediaFilterType.ALL && !isAlbumView && !isFavoritesView ? 'page' : null" (click)="selectFilter(MediaFilterType.ALL)">
       <span class="nav-icon"><ion-icon [name]="currentFilter === MediaFilterType.ALL ? 'grid' : 'grid-outline'"></ion-icon></span>
       <span>All</span>
     </button>
-    <button type="button" class="bottom-nav-item" [class.active]="currentFilter === MediaFilterType.IMAGES"
-      [attr.aria-current]="currentFilter === MediaFilterType.IMAGES ? 'page' : null" (click)="selectFilter(MediaFilterType.IMAGES)">
+    <button type="button" class="bottom-nav-item" [class.active]="currentFilter === MediaFilterType.IMAGES && !isAlbumView && !isFavoritesView"
+      [attr.aria-current]="currentFilter === MediaFilterType.IMAGES && !isAlbumView && !isFavoritesView ? 'page' : null" (click)="selectFilter(MediaFilterType.IMAGES)">
       <span class="nav-icon"><ion-icon [name]="currentFilter === MediaFilterType.IMAGES ? 'images' : 'images-outline'"></ion-icon></span>
       <span>Images</span>
     </button>
-    <button type="button" class="bottom-nav-item" [class.active]="currentFilter === MediaFilterType.VIDEOS"
-      [attr.aria-current]="currentFilter === MediaFilterType.VIDEOS ? 'page' : null" (click)="selectFilter(MediaFilterType.VIDEOS)">
+    <button type="button" class="bottom-nav-item" [class.active]="currentFilter === MediaFilterType.VIDEOS && !isAlbumView && !isFavoritesView"
+      [attr.aria-current]="currentFilter === MediaFilterType.VIDEOS && !isAlbumView && !isFavoritesView ? 'page' : null" (click)="selectFilter(MediaFilterType.VIDEOS)">
       <span class="nav-icon"><ion-icon [name]="currentFilter === MediaFilterType.VIDEOS ? 'videocam' : 'videocam-outline'"></ion-icon></span>
       <span>Videos</span>
     </button>
-    <button type="button" class="bottom-nav-item" routerLink="/albums" aria-label="Open albums">
+    <button type="button" class="bottom-nav-item" routerLink="/albums" [class.active]="isAlbumView || isFavoritesView" [attr.aria-current]="isAlbumView || isFavoritesView ? 'page' : null" aria-label="Open albums">
       <span class="nav-icon"><ion-icon name="albums-outline"></ion-icon></span>
       <span>Albums</span>
     </button>

@@ -1,5 +1,5 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
-import { ActionSheetController, AlertController, LoadingController } from '@ionic/angular';
+import { Component, OnInit, OnDestroy, ViewChild } from '@angular/core';
+import { ActionSheetController, AlertController, IonContent, LoadingController } from '@ionic/angular';
 import { Router } from '@angular/router';
 import { PhotoService } from '../../services/photo.service';
 import { MediaService, MediaSortType, MediaFilter } from '../../services/media.service';
@@ -24,6 +24,7 @@ interface MediaDateGroup {
   standalone: false
 })
 export class HomePage implements OnInit, OnDestroy {
+  @ViewChild(IonContent) private galleryContent?: IonContent;
   private unsubscribeMediaUpdates?: () => void;
   private unsubscribeFavorites?: () => void;
   private skipNextViewEntry = true;
@@ -114,7 +115,8 @@ export class HomePage implements OnInit, OnDestroy {
       this.activeAlbumName = albumFilter;
       this.activeAlbumId = this.router.routerState.snapshot.root.queryParams['albumId'] || '';
       this.currentFilter = MediaFilterType.ALL;
-      await this.mediaService.refreshRecentMedia(false);
+      // AlbumsPage has populated the shared media index; render from it without
+      // waiting on another scan before showing the selected folder.
       await this.loadMediaFromStore(albumFilter, this.activeAlbumId);
     } else {
       this.activeAlbumName = '';
@@ -828,11 +830,59 @@ export class HomePage implements OnInit, OnDestroy {
     await this.loadMediaFromStore(query['album'], query['albumId']);
   }
 
+  async refreshGallery(event: CustomEvent) {
+    const refresher = event.target as unknown as { complete: () => Promise<void> };
+    let previousScrollTop = 0;
+    let scrollElement: HTMLElement | undefined;
+    try {
+      scrollElement = await this.galleryContent?.getScrollElement();
+      previousScrollTop = scrollElement?.scrollTop || 0;
+      await this.mediaService.scanAllMedia({ forceRefresh: true });
+      if (this.hasPermission) await this.mediaService.getAlbums();
+
+      const query = this.router.routerState.snapshot.root.queryParams;
+      const album = query['album'];
+      const albumId = query['albumId'];
+      this.loadLegacyPhotos();
+      await this.loadMediaFromStore(album, albumId);
+
+      if (scrollElement && previousScrollTop > 0) {
+        // Wait for Angular to render the refreshed first batch before restoring.
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        const requiredHeight = previousScrollTop + scrollElement.clientHeight;
+        while (this.displayedMedia.length < this.mediaItems.length && scrollElement.scrollHeight < requiredHeight) {
+          this.loadNextBatch();
+          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        }
+        await this.galleryContent?.scrollToPoint(0, Math.min(previousScrollTop, Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight)), 0);
+      }
+    } catch (error) {
+      console.error('Could not refresh the gallery:', error);
+    } finally {
+      await refresher.complete();
+    }
+  }
+
   async selectFilter(filter: MediaFilterType) {
-    if (this.currentFilter === filter) return;
+    const leavingAlbum = this.isAlbumView || this.isFavoritesView;
+    if (this.currentFilter === filter && !leavingAlbum) return;
     this.cancelSelection();
     this.currentFilter = filter;
+    this.activeAlbumName = '';
+    this.activeAlbumId = '';
+    if (leavingAlbum) {
+      await this.router.navigate(['/home'], {
+        queryParams: { album: null, albumId: null, favorites: null },
+        queryParamsHandling: 'merge',
+        replaceUrl: true
+      });
+    }
+    this.loadLegacyPhotos();
     await this.refreshMedia();
+  }
+
+  async returnToAlbums() {
+    await this.router.navigate(['/albums']);
   }
 
   get totalMediaCount(): number {
@@ -841,6 +891,10 @@ export class HomePage implements OnInit, OnDestroy {
 
   get isAlbumView(): boolean {
     return Boolean(this.activeAlbumId || this.activeAlbumName);
+  }
+
+  get isFavoritesView(): boolean {
+    return this.router.routerState.snapshot.root.queryParams['favorites'] === 'true';
   }
 
   get imageCount(): number {

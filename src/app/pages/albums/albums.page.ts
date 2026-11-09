@@ -5,6 +5,7 @@ import { PhotoService } from '../../services/photo.service';
 import { MediaService } from '../../services/media.service';
 import { Album, AlbumView } from '../../models/gallery.model';
 import { FavoriteService } from '../../services/favorite.service';
+import { AlbumInfo, MediaItem } from '../../plugins/media-store.plugin';
 
 @Component({
   selector: 'app-albums',
@@ -26,6 +27,7 @@ export class AlbumsPage implements OnInit {
   hasPermission = false;
   isLoading = false;
   thumbnails = new Map<string, string>();
+  private coverMediaKeys = new Map<string, string>();
 
   constructor(
     private photoService: PhotoService,
@@ -43,67 +45,52 @@ export class AlbumsPage implements OnInit {
   ngOnDestroy() { this.unsubscribeFavorites?.(); }
 
   async ionViewWillEnter() {
-    if (this.hasPermission) {
-      await this.mediaService.scanAllMedia({ forceRefresh: false });
-      await this.mediaService.refreshRecentMedia(false);
-    }
     await this.loadAlbums();
   }
 
   async initialize() {
     this.hasPermission = await this.mediaService.checkPermissions();
-    if (this.hasPermission) await this.mediaService.scanAllMedia({ forceRefresh: false });
+    if (this.hasPermission) {
+      const cachedMedia = await this.mediaService.loadCachedMediaIndex();
+      if (cachedMedia.length === 0) await this.mediaService.scanAllMedia({ forceRefresh: false });
+    }
     await this.loadAlbums();
   }
 
   async loadAlbums() {
     this.isLoading = true;
     await this.favoriteService.whenReady();
-
-    // Load custom albums (legacy)
     this.customAlbums = this.photoService.getAlbums();
+    const favoriteMedia = this.mediaService.getMedia().filter(item => this.favoriteService.isFavoriteSync(item.id, item.type));
+    const localFavorites = this.photoService.getPhotos().filter(photo => this.favoriteService.isFavoriteSync(photo.id, 'local'));
+    const favoriteCover = favoriteMedia[0];
+    const favoriteCoverKey = favoriteCover ? `${favoriteCover.type}:${favoriteCover.id}` : localFavorites[0] ? `local:${localFavorites[0].id}` : undefined;
+    const favoritesAlbum: AlbumView = {
+      id: 'favorites',
+      name: 'Favorites',
+      count: favoriteMedia.length + localFavorites.length,
+      coverThumbnail: favoriteCoverKey && this.coverMediaKeys.get('favorites') === favoriteCoverKey
+        ? this.thumbnails.get('favorites')
+        : favoriteCover ? undefined : localFavorites[0]?.webviewPath,
+      type: 'auto'
+    };
 
-    // Load auto-detected albums if we have permission
     if (this.hasPermission) {
       try {
         const albums = await this.mediaService.getAlbums();
-        
-        // Convert to view models
-        this.autoAlbums = await Promise.all(
-          albums.map(async (album) => {
-            const cover = this.mediaService.getAlbumCover(album.name, album.id);
-            let coverThumbnail: string | undefined;
-            
-            if (cover) {
-              try {
-                coverThumbnail = await this.mediaService.getThumbnail(cover.id, cover.type);
-                this.thumbnails.set(album.id, coverThumbnail);
-              } catch (error) {
-                console.error('Error loading album cover:', error);
-              }
-            }
-
-            return {
-              id: album.id,
-              name: album.name,
-              count: album.count,
-              coverThumbnail,
-              type: 'auto' as const
-            };
-          })
-        );
-
-        // Combine both types
-        const favorites = this.mediaService.getMedia().filter(item => this.favoriteService.isFavoriteSync(item.id, item.type));
-        const localFavorites = this.photoService.getPhotos().filter(photo => this.favoriteService.isFavoriteSync(photo.id, 'local'));
-        const favoriteCover = favorites[0];
-        let favoriteCoverThumbnail = localFavorites[0]?.webviewPath;
-        if (favoriteCover) {
-          try { favoriteCoverThumbnail = await this.mediaService.getThumbnail(favoriteCover.id, favoriteCover.type); }
-          catch { favoriteCoverThumbnail = undefined; }
-        }
+        this.autoAlbums = albums.map(album => {
+          const cover = this.mediaService.getAlbumCover(album.name, album.id);
+          const coverKey = cover ? `${cover.type}:${cover.id}` : undefined;
+          return {
+            id: album.id,
+            name: album.name,
+            count: album.count,
+            coverThumbnail: coverKey && this.coverMediaKeys.get(album.id) === coverKey ? this.thumbnails.get(album.id) : undefined,
+            type: 'auto' as const
+          };
+        });
         this.allAlbums = [
-          { id: 'favorites', name: 'Favorites', count: favorites.length + localFavorites.length, coverThumbnail: favoriteCoverThumbnail, type: 'auto' as const },
+          favoritesAlbum,
           ...this.autoAlbums,
           ...this.customAlbums.map(album => ({
             id: album.id,
@@ -113,31 +100,48 @@ export class AlbumsPage implements OnInit {
             type: 'custom' as const
           }))
         ];
+        this.isLoading = false;
+        void this.loadAlbumCovers(albums, favoriteCover, favoriteCoverKey);
+        return;
       } catch (error) {
         console.error('Error loading auto albums:', error);
-        // Fall back to custom albums only
-        const favoritePhotos = this.photoService.getPhotos().filter(photo => this.favoriteService.isFavoriteSync(photo.id, 'local'));
-        this.allAlbums = [{ id: 'favorites', name: 'Favorites', count: favoritePhotos.length, coverThumbnail: favoritePhotos[0]?.webviewPath, type: 'auto' as const }, ...this.customAlbums.map(album => ({
-          id: album.id,
-          name: album.name,
-          count: album.photoCount,
-          coverThumbnail: album.coverPhoto,
-          type: 'custom' as const
-        }))];
       }
-    } else {
-      // Only show custom albums
-      const favoritePhotos = this.photoService.getPhotos().filter(photo => this.favoriteService.isFavoriteSync(photo.id, 'local'));
-      this.allAlbums = [{ id: 'favorites', name: 'Favorites', count: favoritePhotos.length, coverThumbnail: favoritePhotos[0]?.webviewPath, type: 'auto' as const }, ...this.customAlbums.map(album => ({
+    }
+
+    this.autoAlbums = [];
+    this.allAlbums = [favoritesAlbum, ...this.customAlbums.map(album => ({
         id: album.id,
         name: album.name,
         count: album.photoCount,
         coverThumbnail: album.coverPhoto,
         type: 'custom' as const
       }))];
+    this.isLoading = false;
+  }
+
+  private async loadAlbumCovers(albums: AlbumInfo[], favoriteCover?: MediaItem, favoriteCoverKey?: string) {
+    const work: Array<{ key: string; media?: MediaItem }> = [];
+    if (favoriteCover && favoriteCoverKey && this.coverMediaKeys.get('favorites') !== favoriteCoverKey) work.push({ key: 'favorites', media: favoriteCover });
+    for (const album of albums) {
+      const cover = this.mediaService.getAlbumCover(album.name, album.id);
+      const coverKey = cover ? `${cover.type}:${cover.id}` : undefined;
+      if (cover && coverKey && this.coverMediaKeys.get(album.id) !== coverKey) work.push({ key: album.id, media: cover });
     }
 
-    this.isLoading = false;
+    for (let i = 0; i < work.length; i += 4) {
+      await Promise.all(work.slice(i, i + 4).map(async ({ key, media }) => {
+        if (!media) return;
+        try {
+          const thumbnail = await this.mediaService.getThumbnail(media.id, media.type);
+          this.thumbnails.set(key, thumbnail);
+          this.coverMediaKeys.set(key, `${media.type}:${media.id}`);
+          const album = this.allAlbums.find(item => item.id === key);
+          if (album) album.coverThumbnail = thumbnail;
+        } catch (error) {
+          console.warn('Could not load album cover:', key, error);
+        }
+      }));
+    }
   }
 
   async createAlbum() {
