@@ -9,6 +9,7 @@ import { Photo } from '../../models/gallery.model';
 import { SystemBarsService } from '../../services/system-bars.service';
 import { ImageCropperComponent, LoadedImage } from 'ngx-image-cropper';
 import { FavoriteService } from '../../services/favorite.service';
+import { SecureFolderService } from '../../services/secure-folder.service';
 
 @Component({
   selector: 'app-viewer',
@@ -84,6 +85,7 @@ export class ViewerPage implements OnInit, OnDestroy {
     private alertController: AlertController,
     private systemBars: SystemBarsService,
     public favoriteService: FavoriteService,
+    private secureFolder: SecureFolderService,
     private zone: NgZone
   ) {}
 
@@ -564,15 +566,42 @@ export class ViewerPage implements OnInit, OnDestroy {
   }
 
   async showMediaMenu() {
+    const image=this.isImageMedia;
     const actionSheet = await this.actionSheetController.create({
       header: 'Media options',
       buttons: [
+        { text: 'Add to Secure Folder', icon: 'lock-closed-outline', handler: () => { void this.addCurrentToSecureFolder(); } },
+        { text: this.currentIsFavorite ? 'Remove from favorites' : 'Add to favorites', icon: this.currentIsFavorite ? 'heart-dislike-outline' : 'heart-outline', handler: () => { void this.toggleFavorite(); } },
+        { text: 'Share', icon: 'share-social-outline', handler: () => { void this.shareCurrentMedia(); } },
+        ...(image ? [{ text: 'Edit photo', icon: 'create-outline', handler: () => this.startEditing() }] : []),
+        ...(image ? [{ text: 'Reset zoom', icon: 'scan-outline', handler: () => this.resetZoom() }] : []),
         { text: 'Details', icon: 'information-circle-outline', handler: () => { void this.showMediaDetails(); } },
         { text: 'Delete', icon: 'trash-outline', role: 'destructive', handler: () => { void this.deleteCurrentMedia(); } },
         { text: 'Cancel', icon: 'close-outline', role: 'cancel' }
       ]
     });
     await actionSheet.present();
+  }
+
+  async addCurrentToSecureFolder() {
+    const device=this.currentMedia, local=this.currentPhoto;
+    if(!device&&!local)return;
+    let encryptedCopySaved=false;
+    try {
+      if(device)await this.secureFolder.importDevice(device.id,device.type);else await this.secureFolder.importLocal(local!.filepath,local!.name,'image/jpeg',local!.dateTaken.getTime());
+      encryptedCopySaved=true;
+      const remove=await this.alertController.create({header:'Saved privately',message:'The encrypted copy is verified. Remove the original from your gallery?',buttons:[{text:'Keep in Gallery',role:'cancel'},{text:'Remove Original',role:'destructive'}]});await remove.present();const choice=await remove.onDidDismiss();
+      if(choice.role==='destructive'){
+        if(device){const result=await this.mediaService.deleteMediaDetailed([device]);if(result.deletedCount>0){await this.advanceAfterRemoval(device.id);return;}const msg=await this.alertController.create({header:'Original kept',message:'Android did not approve removal. Your encrypted copy is safe and the original remains in the gallery.',buttons:['OK']});await msg.present();}
+        else if(local){await this.photoService.deletePhoto(local);await this.advanceAfterRemoval(local.id);return;}
+      }
+      if(choice.role!=='destructive'){const done=await this.alertController.create({header:'Added to Secure Folder',message:'The encrypted copy is private. The original remains in your gallery.',buttons:['Done']});await done.present();}
+    } catch(error) { console.error('Could not add media to Secure Folder:',error);const failed=await this.alertController.create({header:encryptedCopySaved?'Private copy saved':'Could not secure this media',message:encryptedCopySaved?'The encrypted copy is safe. The original remains in the normal gallery.':'The original was left in the normal gallery. Please try again.',buttons:['OK']});await failed.present(); }
+  }
+
+  private async advanceAfterRemoval(id:string){
+    if(this.currentPhoto){const index=this.localPhotos.findIndex(p=>p.id===id);if(index>=0)this.localPhotos.splice(index,1);if(this.localPhotos.length) this.loadLocalPhoto(Math.min(index<0?this.currentIndex:index,this.localPhotos.length-1));else await this.close();return;}
+    const index=this.allMedia.findIndex(m=>m.id===id);if(index>=0)this.allMedia.splice(index,1);if(this.allMedia.length)await this.loadMedia(Math.min(index<0?this.currentIndex:index,this.allMedia.length-1));else await this.close();
   }
 
   async showMediaDetails() {
@@ -597,8 +626,9 @@ export class ViewerPage implements OnInit, OnDestroy {
   async deleteCurrentMedia() {
     if (this.currentMedia) {
       try {
+        const id=this.currentMedia.id;
         const deleted = await this.mediaService.deleteMedia([this.currentMedia]);
-        if (deleted) await this.close();
+        if (deleted) await this.advanceAfterRemoval(id);
       } catch (error) {
         console.error('Error deleting media:', error);
         const alert = await this.alertController.create({ header: 'Could not delete media', message: 'The device did not allow this item to be deleted.', buttons: ['OK'] });
@@ -609,15 +639,9 @@ export class ViewerPage implements OnInit, OnDestroy {
 
     if (this.currentPhoto) {
       const photo = this.currentPhoto;
-      const confirm = await this.alertController.create({
-        header: 'Delete photo?',
-        message: 'This will permanently remove this photo from the app.',
-        buttons: [
-          { text: 'Cancel', role: 'cancel' },
-          { text: 'Delete', role: 'destructive', handler: () => { void this.photoService.deletePhoto(photo).then(() => this.close()); } }
-        ]
-      });
-      await confirm.present();
+      const confirm=await this.alertController.create({header:'Delete this photo?',message:'This removes the app’s local copy.',buttons:[{text:'Cancel',role:'cancel'},{text:'Delete',role:'destructive'}]});await confirm.present();const result=await confirm.onDidDismiss();if(result.role!=='destructive')return;
+      try { await this.photoService.deletePhoto(photo); await this.advanceAfterRemoval(photo.id); }
+      catch (error) { console.error('Error deleting local media:',error);const alert=await this.alertController.create({header:'Could not delete media',message:'The photo could not be removed from the app gallery.',buttons:['OK']});await alert.present(); }
     }
   }
 
@@ -632,5 +656,12 @@ export class ViewerPage implements OnInit, OnDestroy {
   get mediaCounter(): string {
     const count = this.currentPhoto ? this.localPhotos.length : this.allMedia.length;
     return `${this.currentIndex + 1} / ${count}`;
+  }
+
+  get currentDateLabel(): string {
+    const value=this.currentPhoto?.dateTaken || this.currentMedia?.dateTaken;
+    if(!value)return '';
+    const date=value instanceof Date?value:new Date(value);
+    return new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric',year:'numeric'}).format(date);
   }
 }

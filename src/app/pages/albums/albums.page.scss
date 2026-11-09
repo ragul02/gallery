@@ -18,6 +18,8 @@
   }
 }
 
+.secure-entry{width:calc(100% - 32px);margin:16px;border:1px solid rgba(var(--ion-color-primary-rgb),.2);border-radius:18px;background:linear-gradient(115deg,rgba(var(--ion-color-primary-rgb),.10),var(--ion-card-background,#fff));padding:15px;display:flex;align-items:center;text-align:left;gap:13px;color:var(--ion-text-color)}.secure-entry-icon{width:48px;height:48px;border-radius:15px;display:grid;place-items:center;background:var(--ion-color-primary);color:#fff;font-size:22px}.secure-entry-copy{display:flex;flex:1;flex-direction:column;gap:4px}.secure-entry-copy strong{font-size:15px;font-weight:650}.secure-entry-copy small{color:var(--ion-color-medium);font-size:12px}.secure-chevron{color:var(--ion-color-medium)}
+
 .loading-container {
   display: flex;
   flex-direction: column;

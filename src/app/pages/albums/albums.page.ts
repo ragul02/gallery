@@ -190,6 +190,8 @@ export class AlbumsPage implements OnInit {
     }
   }
 
+  openSecureFolder() { this.router.navigate(['/secure-folder']); }
+
   async deleteAlbum(album: AlbumView) {
     if (album.type !== 'custom') {
       return; // Cannot delete auto albums

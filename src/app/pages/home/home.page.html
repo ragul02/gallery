@@ -1,4 +1,4 @@
-<ion-header class="gallery-header" data-keep-system-bars>
+<ion-header class="gallery-header">
   <ion-toolbar>
     <ion-buttons slot="start" *ngIf="selectionMode">
       <ion-button class="toolbar-action" aria-label="Cancel selection" (click)="cancelSelection()">
@@ -33,7 +33,7 @@
   </ion-toolbar>
 </ion-header>
 
-<ion-content class="gallery-content" [scrollEvents]="true" (ionScroll)="onScroll($event)" data-keep-system-bars>
+<ion-content class="gallery-content" [scrollEvents]="true" (ionScroll)="onScroll($event)">
   <ion-refresher slot="fixed" (ionRefresh)="refreshGallery($event)">
     <ion-refresher-content
       pullingIcon="arrow-down-circle-outline"

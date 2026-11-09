@@ -91,7 +91,9 @@ export class HomePage implements OnInit, OnDestroy {
   }
 
   async ionViewWillEnter() {
-    await this.systemBars.setHidden(false);
+    // Keep the Android navigation bar immersive, matching the media viewer.
+    // Android reveals it transiently when the user swipes from the screen edge.
+    await this.systemBars.setHidden(true);
     await this.photoService.whenReady();
 
     // ngOnInit owns the first load. Avoid starting a second scan while that

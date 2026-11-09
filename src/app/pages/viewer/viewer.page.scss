@@ -13,20 +13,20 @@
 .viewer-gallery-header ion-toolbar {
   --background: #fff;
   --color: #171923;
-  --min-height: 58px;
-  --padding-start: 12px;
-  --padding-end: 10px;
+  --min-height: 74px;
+  --padding-start: 8px;
+  --padding-end: 8px;
   border-bottom: 1px solid #ececf2;
 
-  ion-title { min-width: 0; padding-inline-start: 8px; font-size: 15px; font-weight: 700; }
+  ion-title { position: relative; inset: auto; transform: none; flex: 1 1 auto; width: auto; max-width: none; min-width: 0; padding-inline-start: 6px; padding-inline-end: 4px; font-size: 14px; font-weight: 700; text-align: left; white-space: normal; }
   ion-buttons { flex: 0 0 auto; }
-  .toolbar-action { --color: #555969; --border-radius: 14px; width: 46px; height: 46px; font-size: 25px; }
-  .toolbar-action ion-icon { font-size: 25px; }
-  .favorite-action { --color: #777b89; transition: transform .18s ease, color .18s ease; }
+  .toolbar-action { --color: #555969; --border-radius: 14px; width: 42px; height: 46px; font-size: 23px; }
+  .toolbar-action ion-icon { font-size: 23px; }
   .favorite-action.is-favorite { --color: #e54866; animation: favorite-pop .2s ease-out; }
   .viewer-brand { width: 34px; height: 34px; }
-  .viewer-nav-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  small { display: block; margin-top: 2px; color: #777b89; font-size: 11px; font-weight: 500; }
+  .viewer-nav-title { display: flex; min-width: 0; flex-direction: column; gap: 3px; overflow: visible; white-space: normal; }
+  .viewer-media-name { display: -webkit-box; overflow: hidden; color: #20212a; font-size: 13px; font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .viewer-media-meta { display: block; overflow: hidden; margin: 0; color: #777b89; font-size: 10px; font-weight: 500; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 }
 
 @keyframes favorite-pop { 50% { transform: scale(1.2); } }

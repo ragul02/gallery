@@ -230,3 +230,13 @@ The application is secure and ready for deployment to end users.
 **Critical Issues**: 0 ✅  
 **Security Patches Applied**: 3 ✅  
 **Deployment Ready**: Yes ✅
+
+## Secure Folder implementation notes (November 2026)
+
+Secure Folder stores imported media as AES-GCM ciphertext under the app's internal `files/secure-media` directory. The AES key and PIN verifier envelope are protected with Android Keystore; the verifier is derived with PBKDF2-HMAC-SHA256 (310,000 rounds and a unique salt). Private album metadata and encrypted media are excluded from Android backup/transfer, and `allowBackup` is disabled for the app. Screen capture is disabled while the app is open. Five failed PIN attempts trigger a persistent, progressively increasing delay (up to one hour). There is no PIN recovery or bypass.
+
+Private media is intentionally app-private and is not indexed in MediaStore. The viewer's lock action copies its selected image/video into an album, verifies the encrypted file, then asks whether to remove the original using the Gallery's MediaStore deletion authorization flow. If Android denies removal, the UI reports that the original remains. Private album thumbnails and full-size playback decrypt into memory or app-private cache; the cache is cleared when the folder locks, the app pauses, and on next plugin startup. Restore decrypts a single item as a stream to `DCIM/Restored` and retains the ciphertext unless the operation succeeds. Changing the PIN verifies the current PIN and confirms a matching new PIN.
+
+Uninstalling the app or clearing its app data removes the Keystore key, encrypted private media, verifier, and private index. Private media will then be permanently inaccessible. There is no backup or recovery path.
+
+Remaining work includes multi-select import and restore, album rename/delete, resumable import jobs/progress, and a user-configurable background timeout. Verify the native flows on physical Android versions before release.

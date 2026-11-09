@@ -16,6 +16,10 @@ const routes: Routes = [
     loadChildren: () => import('./pages/albums/albums.module').then(m => m.AlbumsPageModule)
   },
   {
+    path: 'secure-folder',
+    loadChildren: () => import('./pages/secure-folder/secure-folder.module').then(m => m.SecureFolderPageModule)
+  },
+  {
     path: 'album/:id',
     loadChildren: () => import('./pages/album-detail/album-detail.module').then(m => m.AlbumDetailPageModule)
   },

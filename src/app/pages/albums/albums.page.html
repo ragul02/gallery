@@ -30,6 +30,12 @@
     </div>
   </div>
 
+  <button class="secure-entry" (click)="openSecureFolder()">
+    <span class="secure-entry-icon"><ion-icon name="lock-closed"></ion-icon></span>
+    <span class="secure-entry-copy"><strong>Secure Folder</strong><small>Your private photos and videos</small></span>
+    <ion-icon class="secure-chevron" name="chevron-forward"></ion-icon>
+  </button>
+
   <!-- Loading indicator -->
   <div class="loading-container" *ngIf="isLoading">
     <ion-spinner></ion-spinner>

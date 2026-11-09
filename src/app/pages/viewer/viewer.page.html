@@ -7,21 +7,12 @@
     </ion-buttons>
     <!-- <div class="brand-mark viewer-brand" slot="start" aria-hidden="true"><ion-icon name="images"></ion-icon></div> -->
     <ion-title>
-      <div class="viewer-nav-title">{{ currentPhoto?.name || currentMedia?.name || 'Media' }}<small>{{ mediaCounter }}</small></div>
+      <div class="viewer-nav-title">
+        <span class="viewer-media-name">{{ currentPhoto?.name || currentMedia?.name || 'Media' }}</span>
+        <small class="viewer-media-meta">{{ currentDateLabel }}<span aria-hidden="true"> · </span>{{ mediaCounter }}</small>
+      </div>
     </ion-title>
     <ion-buttons slot="end">
-      <ion-button *ngIf="!isEditing" class="toolbar-action favorite-action" [class.is-favorite]="currentIsFavorite" [attr.aria-label]="currentIsFavorite ? 'Remove from favorites' : 'Add to favorites'" [attr.aria-pressed]="currentIsFavorite" (click)="toggleFavorite($event)">
-        <ion-icon slot="icon-only" [name]="currentIsFavorite ? 'heart' : 'heart-outline'"></ion-icon>
-      </ion-button>
-      <ion-button *ngIf="isImageMedia && !isEditing" class="toolbar-action" aria-label="Reset zoom" title="Reset zoom" (click)="resetZoom()">
-        <ion-icon slot="icon-only" name="scan-outline"></ion-icon>
-      </ion-button>
-      <ion-button *ngIf="isImageMedia && !isEditing" class="toolbar-action" aria-label="Edit photo" (click)="startEditing()">
-        <ion-icon slot="icon-only" name="create-outline"></ion-icon>
-      </ion-button>
-      <ion-button *ngIf="!isEditing" class="toolbar-action" aria-label="Share media" (click)="shareCurrentMedia()">
-        <ion-icon slot="icon-only" name="share-social-outline"></ion-icon>
-      </ion-button>
       <ion-button *ngIf="!isEditing" class="toolbar-action" aria-label="Media options" (click)="showMediaMenu()">
         <ion-icon slot="icon-only" name="ellipsis-vertical"></ion-icon>
       </ion-button>
